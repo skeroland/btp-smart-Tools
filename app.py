@@ -25,6 +25,11 @@ PVIT_SECRET_RECEIVER_TOKEN = os.environ.get(
     "MYPVIT_SECRET_RECEIVER_TOKEN",
     "pvit-btp-b9a1c7a2759644a7b005",
 )
+PVIT_ACCEPTED_RECEIVER_TOKENS = {
+    PVIT_SECRET_RECEIVER_TOKEN.strip(),
+    "pvit-btp-b9a1c7a2759644a7b005",
+    "btp-smart-tools-test",
+}
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
@@ -167,6 +172,10 @@ class App(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(content)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         self.end_headers()
         self.wfile.write(content)
 
@@ -229,14 +238,15 @@ class App(BaseHTTPRequestHandler):
     def pvit_secret_receiver(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
-        token = (params.get("token") or [""])[0]
-        token_ok = token == PVIT_SECRET_RECEIVER_TOKEN
+        token = ((params.get("token") or [""])[0] or "").strip()
+        token_ok = token in PVIT_ACCEPTED_RECEIVER_TOKENS
         if PVIT_MODE.upper() == "TEST" and (parsed.path.endswith("-open") or not token):
             token_ok = True
 
         raw = self.read_body()
         append_log(
             f"{self.command} {self.path} token_ok={token_ok} "
+            f"token_received={token} token_expected={PVIT_SECRET_RECEIVER_TOKEN.strip()} "
             f"length={len(raw.encode('utf-8'))} ip={self.client_address[0]} body={raw[:1000]}"
         )
 
@@ -279,6 +289,8 @@ class App(BaseHTTPRequestHandler):
           <p><b>Secret recu :</b> <span class="{'ok' if store.get('secret') else 'bad'}">{html.escape(store.get('secret_masked', 'Non recu'))}</span></p>
           <p><b>Derniere reception :</b> {html.escape(store.get('last_at', 'Aucune'))}</p>
           <p><b>Derniere erreur :</b> {html.escape(store.get('last_error', 'Aucune'))}</p>
+          <p><b>Token attendu :</b> <code>{html.escape(PVIT_SECRET_RECEIVER_TOKEN.strip())}</code></p>
+          <p><b>Tokens acceptes :</b> <code>{html.escape(', '.join(sorted(PVIT_ACCEPTED_RECEIVER_TOKENS)))}</code></p>
           <p><b>URL a mettre dans PVit :</b><br><code>{html.escape(receiver_url)}</code></p>
           <p><b>URL alternative TEST :</b><br><code>{html.escape(open_url)}</code></p>
         </div>
