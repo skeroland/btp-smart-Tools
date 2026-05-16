@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import base64
 import cgi
 import hashlib
 import html
@@ -53,6 +54,8 @@ PVIT_OPERATORS_PATH = os.environ.get("MYPVIT_OPERATORS_PATH", "/v2/JSOBJUIWFTUOR
 PVIT_COUNTRIES_PATH = os.environ.get("MYPVIT_COUNTRIES_PATH", "/v2/QWD6RUY5AYML9EY/get-countries")
 PVIT_HEALTH_PATH = os.environ.get("MYPVIT_HEALTH_PATH", "/Q9BA00XLPSEAA6JV/services/health")
 PUBLIC_SITE_URL = os.environ.get("BTP_PUBLIC_URL", f"http://{HOST}:{PORT}").rstrip("/")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 PVIT_SECRET_RECEIVER_TOKEN = os.environ.get("MYPVIT_SECRET_RECEIVER_TOKEN", "pvit-btp-b9a1c7a2759644a7b005").strip()
 PVIT_SECRET_LEGACY_TOKEN = "btp-smart-tools-test"
 PVIT_ACCEPTED_RECEIVER_TOKENS = {
@@ -466,8 +469,100 @@ def get_template(template_id: str | int | None) -> sqlite3.Row | None:
         return con.execute("SELECT * FROM cartouche_templates WHERE id=? AND status='active'", (tid,)).fetchone()
 
 
+def image_data_url_for_ai(path: Path) -> str:
+    with Image.open(path) as img:
+        img = img.convert("RGB")
+        img.thumbnail((1600, 1600))
+        buffer = io.BytesIO()
+        img.save(buffer, format="JPEG", quality=88, optimize=True)
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/jpeg;base64,{encoded}"
+
+
+def extract_output_text(response: dict) -> str:
+    if isinstance(response.get("output_text"), str):
+        return response["output_text"]
+    parts: list[str] = []
+    for item in response.get("output", []) or []:
+        for content in item.get("content", []) or []:
+            text = content.get("text") or content.get("output_text")
+            if isinstance(text, str):
+                parts.append(text)
+    return "\n".join(parts).strip()
+
+
+def openai_template_analysis(path: Path, local_analysis: dict) -> dict | None:
+    if not OPENAI_API_KEY:
+        return None
+
+    prompt = """
+Tu es un assistant BTP specialise dans les cartouches de plans techniques.
+Analyse le modele de cartouche fourni et retourne uniquement un JSON valide.
+Objectif : transformer ce modele en cartouche dynamique reutilisable.
+Le JSON doit contenir :
+- engine
+- model
+- confidence de 0 a 1
+- visual_style : description courte du style
+- orientation
+- dominant_color
+- secondary_colors
+- detected_elements : liste des elements detectes
+- editable_fields : champs dynamiques a prevoir
+- layout_zones : liste d'objets avec name, role, position_estimee, contenu_attendu
+- recommendations : conseils pour reconstruire proprement la cartouche
+Ne mets aucun texte hors JSON.
+"""
+    content: list[dict] = [
+        {"type": "input_text", "text": prompt},
+        {"type": "input_text", "text": "Analyse locale disponible : " + json.dumps(local_analysis, ensure_ascii=False)},
+    ]
+    if path.suffix.lower() in (".png", ".jpg", ".jpeg"):
+        content.append({"type": "input_image", "image_url": image_data_url_for_ai(path)})
+    elif path.suffix.lower() == ".pdf":
+        pdf_text = ""
+        try:
+            reader = PdfReader(str(path))
+            pdf_text = "\n".join((page.extract_text() or "") for page in reader.pages[:2])[:6000]
+        except Exception:
+            pdf_text = ""
+        content.append(
+            {
+                "type": "input_text",
+                "text": "Le fichier importe est un PDF. Texte extrait des premieres pages :\n" + (pdf_text or "Aucun texte exploitable extrait."),
+            }
+        )
+
+    payload = {
+        "model": OPENAI_MODEL,
+        "input": [{"role": "user", "content": content}],
+        "temperature": 0.2,
+        "max_output_tokens": 1800,
+    }
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=45) as response:
+        raw = response.read().decode("utf-8", errors="replace")
+    api_response = json.loads(raw)
+    output_text = extract_output_text(api_response)
+    match = re.search(r"\{.*\}", output_text, re.S)
+    if not match:
+        raise ValueError("L'IA n'a pas retourne de JSON exploitable.")
+    analysis = json.loads(match.group(0))
+    analysis["engine"] = analysis.get("engine") or "openai_vision"
+    analysis["model"] = OPENAI_MODEL
+    analysis["source_file"] = path.name
+    return analysis
+
+
 def build_template_analysis(path: Path, source_type: str, theme_color: str) -> dict:
-    """Local placeholder analysis, ready to be enriched by a future vision API."""
     analysis = {
         "engine": "local_preparation",
         "ai_ready": True,
@@ -516,6 +611,18 @@ def build_template_analysis(path: Path, source_type: str, theme_color: str) -> d
             analysis["orientation"] = "Paysage" if float(box.width) >= float(box.height) else "Portrait"
         except Exception:
             analysis["pdf_note"] = "PDF enregistre, dimensions non detectees."
+    try:
+        ai_analysis = openai_template_analysis(path, analysis)
+        if ai_analysis:
+            ai_analysis.setdefault("source_type", source_type)
+            ai_analysis.setdefault("file_name", path.name)
+            ai_analysis.setdefault("file_size_kb", analysis.get("file_size_kb", 0))
+            ai_analysis.setdefault("dominant_color", analysis.get("dominant_color", theme_color))
+            ai_analysis["local_fallback"] = analysis
+            return ai_analysis
+    except Exception as exc:
+        analysis["engine"] = "local_preparation_ai_failed"
+        analysis["ai_error"] = str(exc)
     return analysis
 
 
@@ -523,7 +630,12 @@ def summarize_template_analysis(analysis: dict) -> str:
     orientation = analysis.get("orientation", "a confirmer")
     size = analysis.get("file_size_kb", 0)
     color = analysis.get("dominant_color", "#08213A")
-    return f"Preparation locale terminee : orientation {orientation}, couleur principale {color}, fichier {size} Ko. Analyse IA avancee prete a connecter."
+    if str(analysis.get("engine", "")).startswith("openai"):
+        confidence = analysis.get("confidence", "a confirmer")
+        return f"Analyse IA terminee : orientation {orientation}, couleur principale {color}, confiance {confidence}, fichier {size} Ko."
+    if analysis.get("ai_error"):
+        return f"Analyse locale terminee, IA non finalisee : {analysis.get('ai_error')}. Orientation {orientation}, couleur {color}."
+    return f"Preparation locale terminee : orientation {orientation}, couleur principale {color}, fichier {size} Ko."
 
 
 def format_fcfa(value: int) -> str:
@@ -1754,7 +1866,7 @@ class App(BaseHTTPRequestHandler):
           <form class="card" method="post" action="/templates" enctype="multipart/form-data">
             <h2>Modeles de cartouche personnalises</h2>
             {message}
-            <p class="muted">Importe une cartouche personnalisee : image, capture ou PDF. Le fichier sert de reference de style. Pour le moment, le site prepare l'analyse locale et la structure. L'analyse IA avancee sera connectee ensuite avec une cle API.</p>
+            <p class="muted">Importe une cartouche personnalisee : image, capture ou PDF. Si la cle OpenAI est active sur Render, le site lance une analyse IA pour comprendre le style, les zones, les cadres et les champs dynamiques.</p>
             <label>Nom du modele</label>
             <input name="name" value="Modele entreprise">
             <label>Choisir une cartouche personnalisÃ©e</label>
@@ -1779,8 +1891,8 @@ class App(BaseHTTPRequestHandler):
         <div class="card" style="margin-top:16px">
           <h2>Preparation API IA</h2>
           <p>Le site est maintenant pret a recevoir une cle API plus tard pour l'analyse intelligente des cartouches personnalisees.</p>
-          <p class="muted">API prevue : vision + OCR + sortie JSON structuree. Variable conseillee : OPENAI_API_KEY.</p>
-          <p class="muted">Quand la cle sera disponible, on connectera le moteur d'analyse avancee sans changer le workflow utilisateur.</p>
+          <p class="muted">API IA : {html.escape('active' if OPENAI_API_KEY else 'non configuree')} - variable : OPENAI_API_KEY.</p>
+          <p class="muted">Les images sont analysees visuellement. Les PDF sont prepares avec metadonnees et texte extrait, puis pourront recevoir une conversion image avancee ensuite.</p>
         </div>"""
         self.send_html("Modeles", body)
 
@@ -1827,10 +1939,13 @@ class App(BaseHTTPRequestHandler):
                 message = "<p class='alert'>PDF modele enregistre comme reference. La reconstruction dynamique avance par etapes : le systeme garde une cartouche propre au lieu de coller le PDF comme fond.</p>"
             analysis = build_template_analysis(saved_path, source_type, theme_color)
             analysis_summary = summarize_template_analysis(analysis)
+            ai_status = "analyse_ia_terminee" if str(analysis.get("engine", "")).startswith("openai") else "preparation_locale"
+            if analysis.get("ai_error"):
+                ai_status = "analyse_ia_erreur_mode_local"
             with db() as con:
                 con.execute(
                     "INSERT INTO cartouche_templates(user_id,name,source_type,source_file,theme_color,ai_status,analysis_json,analysis_summary,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                    (user["id"], name, source_type, str(saved_path), theme_color, "preparation_locale", json.dumps(analysis, ensure_ascii=False), analysis_summary, "active", now()),
+                    (user["id"], name, source_type, str(saved_path), theme_color, ai_status, json.dumps(analysis, ensure_ascii=False), analysis_summary, "active", now()),
                 )
             self.templates_page(message + f"<p class='alert'>{html.escape(analysis_summary)}</p>")
         except Exception as exc:
@@ -1898,9 +2013,9 @@ class App(BaseHTTPRequestHandler):
             <p><a class="btn" href="/template-file/{template['id']}" target="_blank">Voir le fichier importe</a></p>
           </div>
           <div class="card">
-            <h2>Connexion IA prevue</h2>
-            <p>Cette structure est prete pour une API vision/OCR. Quand la cle sera disponible, le systeme remplacera l'analyse locale par une detection automatique plus precise.</p>
-            <p class="muted">Objectif IA : detecter cadres, blocs textes, logo, tableaux, revisions, signatures, couleurs et positions exactes.</p>
+            <h2>Analyse IA / structure</h2>
+            <p>Si la cle OpenAI est configuree dans Render, cette analyse provient du moteur IA. Sinon le systeme affiche une preparation locale de secours.</p>
+            <p class="muted">Objectif : detecter cadres, blocs textes, logo, tableaux, revisions, signatures, couleurs et positions exactes pour reconstruire une cartouche dynamique.</p>
           </div>
         </div>
         <div class="grid" style="margin-top:16px">
