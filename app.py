@@ -34,6 +34,7 @@ DATA = ROOT / "data"
 UPLOADS = DATA / "uploads"
 OUTPUTS = DATA / "outputs"
 BATCHES = DATA / "batches"
+WORKSPACE_FILES = DATA / "workspace_files"
 DB = DATA / "ske.db"
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "10000"))
@@ -267,7 +268,7 @@ def detect_image_style_color(path: Path, fallback: str = "#08213A") -> str:
 
 
 def ensure_dirs():
-    for path in (DATA, UPLOADS, OUTPUTS, BATCHES):
+    for path in (DATA, UPLOADS, OUTPUTS, BATCHES, WORKSPACE_FILES):
         path.mkdir(parents=True, exist_ok=True)
 
 
@@ -367,7 +368,43 @@ def init_db():
                 ai_status TEXT NOT NULL DEFAULT 'preparation_locale',
                 analysis_json TEXT,
                 analysis_summary TEXT,
+                paid_status TEXT NOT NULL DEFAULT 'test_gratuit',
+                final_template_file TEXT,
+                last_used_at TEXT,
                 status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS company_spaces (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_user_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                logo_file TEXT,
+                storage_status TEXT NOT NULL DEFAULT 'local_render_test',
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS workspace_projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                company_id INTEGER,
+                name TEXT NOT NULL,
+                client TEXT,
+                location TEXT,
+                status TEXT NOT NULL DEFAULT 'actif',
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS workspace_documents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                project_id INTEGER,
+                title TEXT NOT NULL,
+                category TEXT NOT NULL,
+                original_name TEXT NOT NULL,
+                stored_file TEXT NOT NULL,
+                mime_type TEXT,
+                size_kb REAL,
+                version_label TEXT NOT NULL DEFAULT 'V1',
+                confidentiality TEXT NOT NULL DEFAULT 'prive',
+                status TEXT NOT NULL DEFAULT 'stocke',
                 created_at TEXT NOT NULL
             );
             """
@@ -378,6 +415,13 @@ def init_db():
             "ALTER TABLE cartouche_templates ADD COLUMN ai_status TEXT NOT NULL DEFAULT 'preparation_locale'",
             "ALTER TABLE cartouche_templates ADD COLUMN analysis_json TEXT",
             "ALTER TABLE cartouche_templates ADD COLUMN analysis_summary TEXT",
+            "ALTER TABLE cartouche_templates ADD COLUMN paid_status TEXT NOT NULL DEFAULT 'test_gratuit'",
+            "ALTER TABLE cartouche_templates ADD COLUMN final_template_file TEXT",
+            "ALTER TABLE cartouche_templates ADD COLUMN last_used_at TEXT",
+            "ALTER TABLE company_spaces ADD COLUMN logo_file TEXT",
+            "ALTER TABLE company_spaces ADD COLUMN storage_status TEXT NOT NULL DEFAULT 'local_render_test'",
+            "ALTER TABLE workspace_documents ADD COLUMN version_label TEXT NOT NULL DEFAULT 'V1'",
+            "ALTER TABLE workspace_documents ADD COLUMN confidentiality TEXT NOT NULL DEFAULT 'prive'",
             "ALTER TABLE payments ADD COLUMN phone TEXT",
             "ALTER TABLE payments ADD COLUMN provider TEXT NOT NULL DEFAULT 'mypvit'",
             "ALTER TABLE payments ADD COLUMN provider_mode TEXT NOT NULL DEFAULT 'TEST'",
@@ -467,6 +511,39 @@ def get_template(template_id: str | int | None) -> sqlite3.Row | None:
         return None
     with db() as con:
         return con.execute("SELECT * FROM cartouche_templates WHERE id=? AND status='active'", (tid,)).fetchone()
+
+
+def get_or_create_company_space(con: sqlite3.Connection, user: sqlite3.Row) -> sqlite3.Row:
+    space = con.execute("SELECT * FROM company_spaces WHERE owner_user_id=? ORDER BY id LIMIT 1", (user["id"],)).fetchone()
+    if space:
+        return space
+    con.execute(
+        "INSERT INTO company_spaces(owner_user_id,name,logo_file,storage_status,created_at) VALUES(?,?,?,?,?)",
+        (user["id"], user["name"] or "Entreprise BTP", "", "local_render_test", now()),
+    )
+    return con.execute("SELECT * FROM company_spaces WHERE owner_user_id=? ORDER BY id DESC LIMIT 1", (user["id"],)).fetchone()
+
+
+def classify_document(filename: str, fallback: str = "Autre") -> str:
+    name = filename.lower()
+    suffix = Path(filename).suffix.lower()
+    if suffix == ".pdf":
+        if any(word in name for word in ("dao", "appel", "offre", "ccap", "cctp", "dqe", "bpu")):
+            return "DAO / Administratif"
+        if any(word in name for word in ("rapport", "pv", "reunion", "journal")):
+            return "Rapport chantier"
+        return "Plan PDF"
+    if suffix in (".dwg", ".dxf"):
+        return "DWG / AutoCAD"
+    if suffix in (".png", ".jpg", ".jpeg"):
+        if any(word in name for word in ("cartouche", "modele", "template")):
+            return "Cartouche"
+        return "Image"
+    if suffix in (".doc", ".docx", ".xls", ".xlsx", ".txt"):
+        return "DAO / Administratif"
+    if suffix == ".zip":
+        return "Archive ZIP"
+    return fallback
 
 
 def image_data_url_for_ai(path: Path) -> str:
@@ -774,6 +851,7 @@ def render_page(title: str, body: str, user: sqlite3.Row | None = None) -> bytes
     nav = [
         ("Accueil", "/"),
         ("Connexion", "/login") if not logged else ("Tableau de bord", "/dashboard"),
+        ("Espace entreprise", "/workspace"),
         ("Generateur", "/generator"),
         ("Aide / Support", "/assistant"),
         ("Modeles", "/templates"),
@@ -819,12 +897,13 @@ def render_page(title: str, body: str, user: sqlite3.Row | None = None) -> bytes
 .preview-sheet.platform_modern{{border-color:#334155}}.preview-sheet.platform_modern .preview-cartouche{{background:#fafbfc;border-left:16px solid #e2e8f0}}.preview-sheet.platform_modern .preview-logo{{height:55px;color:#334155}}.preview-sheet.platform_modern .preview-tag,.preview-sheet.platform_modern .preview-footer{{background:#334155}}
 .preview-sheet.platform_topo{{border-color:#0f766e}}.preview-sheet.platform_topo .preview-cartouche{{background:#f0fdfa;border-left:6px solid #0f766e}}.preview-sheet.platform_topo .preview-logo{{color:#0f766e;border-radius:0 0 18px 18px}}.preview-sheet.platform_topo .preview-tag,.preview-sheet.platform_topo .preview-footer{{background:#0f766e}}
 .preview-sheet.platform_engineering{{border-color:#1d4ed8}}.preview-sheet.platform_engineering .preview-cartouche{{background-image:linear-gradient(#dbeafe 1px,transparent 1px),linear-gradient(90deg,#dbeafe 1px,transparent 1px);background-size:18px 18px}}.preview-sheet.platform_engineering .preview-logo{{color:#1d4ed8}}.preview-sheet.platform_engineering .preview-tag,.preview-sheet.platform_engineering .preview-footer{{background:#1d4ed8}}
-.assistant-float{{position:fixed;right:18px;bottom:18px;z-index:60;display:flex;align-items:center;gap:12px;text-decoration:none;color:#102033;max-width:330px}}
-.assistant-float .bubble{{background:white;border:1px solid rgba(47,140,255,.28);border-radius:16px;padding:12px 14px;box-shadow:0 18px 44px rgba(15,23,42,.20)}}
-.assistant-float .bubble b{{display:block;color:#08213A;font-size:13px;margin-bottom:3px}}
-.assistant-float .bubble span{{display:block;color:#64748b;font-size:12px;line-height:1.25}}
-.assistant-float .icon{{width:54px;height:54px;border-radius:18px;background:linear-gradient(135deg,#2f8cff,#10b981);color:white;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:24px;box-shadow:0 16px 34px rgba(47,140,255,.32)}}
-@media(max-width:700px){{.assistant-float{{left:14px;right:14px;bottom:12px;max-width:none}}.assistant-float .bubble{{flex:1}}}}
+.assistant-float{{position:fixed;right:16px;bottom:14px;z-index:60;display:flex;align-items:center;gap:8px;text-decoration:none;color:#102033;max-width:230px;opacity:.92}}
+.assistant-float:hover{{opacity:1;transform:translateY(-1px)}}
+.assistant-float .bubble{{background:rgba(255,255,255,.96);border:1px solid rgba(47,140,255,.24);border-radius:12px;padding:8px 10px;box-shadow:0 12px 28px rgba(15,23,42,.16)}}
+.assistant-float .bubble b{{display:block;color:#08213A;font-size:11px;margin-bottom:2px;white-space:nowrap}}
+.assistant-float .bubble span{{display:block;color:#64748b;font-size:10px;line-height:1.18;max-width:150px}}
+.assistant-float .icon{{width:38px;height:38px;border-radius:13px;background:linear-gradient(135deg,#2f8cff,#10b981);color:white;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:18px;box-shadow:0 10px 22px rgba(47,140,255,.26)}}
+@media(max-width:700px){{.assistant-float{{right:10px;bottom:10px;max-width:48px}}.assistant-float .bubble{{display:none}}.assistant-float .icon{{width:46px;height:46px}}}}
 </style>
 </head>
 <body>
@@ -1660,6 +1739,8 @@ class App(BaseHTTPRequestHandler):
             return self.logout()
         if path == "/dashboard":
             return self.dashboard()
+        if path == "/workspace":
+            return self.workspace()
         if path == "/generator":
             return self.generator()
         if path == "/assistant":
@@ -1704,6 +1785,8 @@ class App(BaseHTTPRequestHandler):
             return self.generate_action()
         if path == "/assistant":
             return self.assistant_action()
+        if path == "/workspace":
+            return self.workspace_action()
         if path == "/templates":
             return self.templates_action()
         if path == "/batch":
@@ -1815,7 +1898,17 @@ class App(BaseHTTPRequestHandler):
             return
         with db() as con:
             gens = con.execute("SELECT * FROM generations WHERE user_id=? ORDER BY id DESC LIMIT 10", (user["id"],)).fetchall()
+            templates = con.execute("SELECT * FROM cartouche_templates WHERE user_id=? ORDER BY id DESC LIMIT 8", (user["id"],)).fetchall()
+            batches = con.execute("SELECT * FROM batches WHERE user_id=? ORDER BY id DESC LIMIT 5", (user["id"],)).fetchall()
         rows = "".join(f"<tr><td>{g['created_at']}</td><td>{html.escape(g['plan_number'] or '')}</td><td>{html.escape(g['project'])}</td><td>{html.escape(g['format_plan'])}</td><td><a href='{download_url(g['output_file'])}'>Telecharger</a></td></tr>" for g in gens) or "<tr><td colspan='5'>Aucune generation.</td></tr>"
+        template_rows = "".join(
+            f"<tr><td>{html.escape(t['name'])}</td><td>{html.escape(t['source_type'])}</td><td>{html.escape(t['ai_status'] if 'ai_status' in t.keys() else 'preparation_locale')}</td><td>{html.escape(t['paid_status'] if 'paid_status' in t.keys() else 'test_gratuit')}</td><td><a href='/template-file/{t['id']}' target='_blank'>Fichier</a> | <a href='/template-analysis/{t['id']}'>Analyse</a></td></tr>"
+            for t in templates
+        ) or "<tr><td colspan='5'>Aucun modele importe.</td></tr>"
+        batch_rows = "".join(
+            f"<tr><td>{b['created_at']}</td><td>{html.escape(b['project'])}</td><td>{b['total_files']}</td><td>{html.escape(b['status'])}</td><td><a href='{download_url(b['output_zip'])}'>ZIP</a></td></tr>"
+            for b in batches
+        ) or "<tr><td colspan='5'>Aucun traitement batch.</td></tr>"
         body = f"""
         <h2>Tableau de bord utilisateur</h2>
         <div class="grid3">
@@ -1836,8 +1929,185 @@ class App(BaseHTTPRequestHandler):
             <p class="muted">La production sera activee apres validation administrative PVit.</p>
           </div>
         </div>
-        <div class="card" style="margin-top:16px"><h3>Historique</h3><table><tr><th>Date</th><th>N plan</th><th>Projet</th><th>Format</th><th>PDF</th></tr>{rows}</table></div>"""
+        <div class="card" style="margin-top:16px">
+          <h3>Bibliotheque intelligente de modeles</h3>
+          <p class="muted">Chaque cartouche importee est liee au compte utilisateur, stockee, analysee et reutilisable plus tard dans le generateur.</p>
+          <table><tr><th>Modele</th><th>Type</th><th>Analyse</th><th>Acces</th><th>Actions</th></tr>{template_rows}</table>
+          <p><a class="btn purple" href="/templates">Importer ou gerer mes modeles</a></p>
+        </div>
+        <div class="card" style="margin-top:16px"><h3>Historique PDF generes</h3><table><tr><th>Date</th><th>N plan</th><th>Projet</th><th>Format</th><th>PDF</th></tr>{rows}</table></div>
+        <div class="card" style="margin-top:16px"><h3>Traitements IA Batch / ZIP</h3><table><tr><th>Date</th><th>Projet</th><th>PDF</th><th>Statut</th><th>Fichier</th></tr>{batch_rows}</table></div>"""
         self.send_html("Tableau de bord", body)
+
+    def workspace(self, message: str = ""):
+        user = self.require_login()
+        if not user:
+            return
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+        q = (params.get("q") or [""])[0].strip()
+        with db() as con:
+            space = get_or_create_company_space(con, user)
+            projects = con.execute("SELECT * FROM workspace_projects WHERE user_id=? ORDER BY id DESC", (user["id"],)).fetchall()
+            if q:
+                like = f"%{q}%"
+                docs = con.execute(
+                    """
+                    SELECT d.*, p.name project_name
+                    FROM workspace_documents d
+                    LEFT JOIN workspace_projects p ON p.id=d.project_id
+                    WHERE d.user_id=? AND (d.title LIKE ? OR d.category LIKE ? OR d.original_name LIKE ? OR p.name LIKE ?)
+                    ORDER BY d.id DESC
+                    LIMIT 50
+                    """,
+                    (user["id"], like, like, like, like),
+                ).fetchall()
+            else:
+                docs = con.execute(
+                    """
+                    SELECT d.*, p.name project_name
+                    FROM workspace_documents d
+                    LEFT JOIN workspace_projects p ON p.id=d.project_id
+                    WHERE d.user_id=?
+                    ORDER BY d.id DESC
+                    LIMIT 25
+                    """,
+                    (user["id"],),
+                ).fetchall()
+            templates = con.execute("SELECT * FROM cartouche_templates WHERE user_id=? ORDER BY id DESC LIMIT 10", (user["id"],)).fetchall()
+        project_options = "".join(f"<option value='{p['id']}'>{html.escape(p['name'])}</option>" for p in projects)
+        project_rows = "".join(
+            f"<tr><td>{html.escape(p['name'])}</td><td>{html.escape(p['client'] or '')}</td><td>{html.escape(p['location'] or '')}</td><td>{html.escape(p['status'])}</td><td>{html.escape(p['created_at'])}</td></tr>"
+            for p in projects
+        ) or "<tr><td colspan='5'>Aucun projet pour le moment.</td></tr>"
+        doc_rows = "".join(
+            f"<tr><td>{html.escape(d['title'])}</td><td>{html.escape(d['category'])}</td><td>{html.escape(d['project_name'] or 'Non classe')}</td><td>{html.escape(d['version_label'])}</td><td>{round(float(d['size_kb'] or 0), 1)} Ko</td><td>{html.escape(d['created_at'])}</td><td><a href='{download_url(d['stored_file'])}'>Telecharger</a></td></tr>"
+            for d in docs
+        ) or "<tr><td colspan='7'>Aucun document stocke.</td></tr>"
+        template_rows = "".join(
+            f"<tr><td>{html.escape(t['name'])}</td><td>{html.escape(t['ai_status'])}</td><td>{html.escape(t['paid_status'] if 'paid_status' in t.keys() else 'test_gratuit')}</td><td><a href='/template-analysis/{t['id']}'>Analyse</a></td></tr>"
+            for t in templates
+        ) or "<tr><td colspan='4'>Aucun modele personnalise.</td></tr>"
+        body = f"""
+        <h2>Espace professionnel prive</h2>
+        {message}
+        <div class="grid3">
+          <div class="stat"><b>{html.escape(space['name'])}</b>Espace entreprise</div>
+          <div class="stat"><b>{len(projects)}</b>Projets</div>
+          <div class="stat"><b>{len(docs)}</b>Documents recents</div>
+        </div>
+        <div class="card" style="margin-top:16px">
+          <h3>Securite et confidentialite</h3>
+          <p class="muted">Premiere base : chaque fichier est lie au compte connecte et reste invisible pour les autres utilisateurs. En production avancee, on passera au stockage prive permanent avec liens temporaires, roles par entreprise et sauvegardes.</p>
+          <div class="grid3">
+            <div class="stat"><b>2FA</b>Code email/SMS a venir</div>
+            <div class="stat"><b>Roles</b>Admin, chef projet, lecteur</div>
+            <div class="stat"><b>Prive</b>Documents separes par compte</div>
+          </div>
+        </div>
+        <div class="grid" style="margin-top:16px">
+          <form class="card" method="post" action="/workspace">
+            <h3>Creer un projet / chantier</h3>
+            <input type="hidden" name="action" value="create_project">
+            <label>Nom du projet</label><input name="name" value="Jardin Botanique">
+            <label>Client / Maitre d'ouvrage</label><input name="client" placeholder="Entreprise, ministere, client">
+            <label>Localisation</label><input name="location" placeholder="Libreville, Owendo, Akanda...">
+            <button class="green">Creer le projet</button>
+          </form>
+          <form class="card" method="post" action="/workspace" enctype="multipart/form-data">
+            <h3>Ajouter un document prive</h3>
+            <input type="hidden" name="action" value="upload_document">
+            <label>Projet</label><select name="project_id"><option value="">Non classe</option>{project_options}</select>
+            <label>Titre du document</label><input name="title" placeholder="Plan topographique, DAO, Rapport...">
+            <label>Categorie</label><select name="category"><option>Automatique</option><option>Plan PDF</option><option>Cartouche</option><option>Rapport chantier</option><option>DAO / Administratif</option><option>DWG / AutoCAD</option><option>Image</option><option>Autre</option></select>
+            <label>Version</label><input name="version_label" value="V1">
+            <label>Fichier</label><input type="file" name="document_file" accept=".pdf,.dwg,.dxf,.png,.jpg,.jpeg,.doc,.docx,.xls,.xlsx,.txt,.zip" required>
+            <button class="purple">Stocker dans mon espace</button>
+          </form>
+        </div>
+        <div class="card" style="margin-top:16px"><h3>Projets / chantiers</h3><table><tr><th>Projet</th><th>Client</th><th>Localisation</th><th>Statut</th><th>Date</th></tr>{project_rows}</table></div>
+        <div class="card" style="margin-top:16px">
+          <h3>Recherche intelligente simple</h3>
+          <form method="get" action="/workspace" class="row"><input name="q" value="{html.escape(q)}" placeholder="Rechercher par projet, fichier, type, chantier..." style="max-width:520px"><button>Rechercher</button><a class="btn dark" href="/workspace">Tout afficher</a></form>
+        </div>
+        <div class="card" style="margin-top:16px"><h3>Documents stockes</h3><table><tr><th>Titre</th><th>Categorie</th><th>Projet</th><th>Version</th><th>Taille</th><th>Date</th><th>Fichier</th></tr>{doc_rows}</table></div>
+        <div class="card" style="margin-top:16px"><h3>Modeles de cartouches lies au compte</h3><table><tr><th>Modele</th><th>Analyse</th><th>Acces</th><th>Action</th></tr>{template_rows}</table></div>
+        """
+        self.send_html("Espace entreprise", body)
+
+    def workspace_action(self):
+        user = self.require_login()
+        if not user:
+            return
+        content_type = self.headers.get("Content-Type", "")
+        if content_type.startswith("multipart/form-data"):
+            form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": content_type})
+            item = form["document_file"] if "document_file" in form else None
+            if item is None or not getattr(item, "filename", ""):
+                return self.workspace("<p class='alert'>Choisis un fichier a stocker.</p>")
+            title = (form.getfirst("title") or Path(item.filename).stem).strip() or "Document"
+            category_choice = (form.getfirst("category") or "Automatique").strip()
+            version_label = (form.getfirst("version_label") or "V1").strip()
+            try:
+                project_id = int(form.getfirst("project_id") or 0) or None
+            except Exception:
+                project_id = None
+            with db() as con:
+                if project_id:
+                    exists = con.execute("SELECT id FROM workspace_projects WHERE id=? AND user_id=?", (project_id, user["id"])).fetchone()
+                    if not exists:
+                        project_id = None
+                base_dir = WORKSPACE_FILES / f"user_{user['id']}" / f"project_{project_id or 'non_classe'}"
+                base_dir.mkdir(parents=True, exist_ok=True)
+                suffix = Path(item.filename).suffix.lower()
+                stored_name = f"{int(time.time())}_{secrets.token_hex(4)}_{safe_file(Path(item.filename).stem)}{suffix}"
+                stored_path = base_dir / stored_name
+                with stored_path.open("wb") as f:
+                    shutil.copyfileobj(item.file, f)
+                size_kb = round(stored_path.stat().st_size / 1024, 1) if stored_path.exists() else 0
+                category = classify_document(item.filename, "Autre") if category_choice == "Automatique" else category_choice
+                con.execute(
+                    "INSERT INTO workspace_documents(user_id,project_id,title,category,original_name,stored_file,mime_type,size_kb,version_label,confidentiality,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (user["id"], project_id, title, category, item.filename, str(stored_path), content_type, size_kb, version_label, "prive", "stocke", now()),
+                )
+                imported_count = 1
+                if suffix == ".zip":
+                    extract_dir = base_dir / f"extrait_{stored_path.stem}"
+                    extract_dir.mkdir(parents=True, exist_ok=True)
+                    try:
+                        with zipfile.ZipFile(stored_path, "r") as zf:
+                            for member in zf.namelist():
+                                if member.endswith("/") or Path(member).name.startswith("."):
+                                    continue
+                                member_name = Path(member).name
+                                member_suffix = Path(member_name).suffix.lower()
+                                if member_suffix not in (".pdf", ".dwg", ".dxf", ".png", ".jpg", ".jpeg", ".doc", ".docx", ".xls", ".xlsx", ".txt"):
+                                    continue
+                                out_name = f"{int(time.time())}_{secrets.token_hex(3)}_{safe_file(Path(member_name).stem)}{member_suffix}"
+                                out_path = extract_dir / out_name
+                                with out_path.open("wb") as f:
+                                    f.write(zf.read(member))
+                                imported_count += 1
+                                con.execute(
+                                    "INSERT INTO workspace_documents(user_id,project_id,title,category,original_name,stored_file,mime_type,size_kb,version_label,confidentiality,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                                    (user["id"], project_id, Path(member_name).stem, classify_document(member_name, "Autre"), member_name, str(out_path), "archive/extracted", round(out_path.stat().st_size / 1024, 1), version_label, "prive", "stocke", now()),
+                                )
+                    except Exception:
+                        pass
+            return self.workspace(f"<p class='alert'>{imported_count} document(s) stocke(s) dans votre espace prive.</p>")
+        form = self.read_form()
+        if form.get("action") == "create_project":
+            name = (form.get("name") or "").strip() or "Nouveau projet"
+            client = (form.get("client") or "").strip()
+            location = (form.get("location") or "").strip()
+            with db() as con:
+                space = get_or_create_company_space(con, user)
+                con.execute(
+                    "INSERT INTO workspace_projects(user_id,company_id,name,client,location,status,created_at) VALUES(?,?,?,?,?,?,?)",
+                    (user["id"], space["id"], name, client, location, "actif", now()),
+                )
+            return self.workspace("<p class='alert'>Projet cree dans l'espace entreprise.</p>")
+        return self.workspace("<p class='alert'>Action non reconnue.</p>")
 
     def templates_page(self, message: str = ""):
         user = self.require_login()
@@ -1878,9 +2148,11 @@ class App(BaseHTTPRequestHandler):
           <div class="card">
             <h2>Workflow prepare</h2>
             <p>1. Import du modele de cartouche.</p>
-            <p>2. Analyse locale : type de fichier, couleur principale, format, orientation et champs a rendre dynamiques.</p>
-            <p>3. Sauvegarde du modele comme reference reutilisable.</p>
-            <p>4. Plus tard : branchement API vision/OCR pour detecter automatiquement les cadres, textes, logo, zones et tableaux.</p>
+            <p>2. Stockage du fichier dans <b>data/uploads</b> et liaison au compte utilisateur.</p>
+            <p>3. Analyse IA ou locale : style, couleur, format, orientation et champs dynamiques.</p>
+            <p>4. Sauvegarde dans la bibliotheque personnelle <b>cartouche_templates</b>.</p>
+            <p>5. Reutilisation possible plus tard dans le generateur et le tableau de bord.</p>
+            <p>6. Les PDF finaux generes sont gardes dans l'historique utilisateur.</p>
             <p class="alert">Important : l'objectif final n'est pas de coller l'image en fond, mais de reconstruire une cartouche dynamique propre, modifiable et reutilisable.</p>
           </div>
         </div>
@@ -1893,6 +2165,7 @@ class App(BaseHTTPRequestHandler):
           <p>Le site est maintenant pret a recevoir une cle API plus tard pour l'analyse intelligente des cartouches personnalisees.</p>
           <p class="muted">API IA : {html.escape('active' if OPENAI_API_KEY else 'non configuree')} - variable : OPENAI_API_KEY.</p>
           <p class="muted">Les images sont analysees visuellement. Les PDF sont prepares avec metadonnees et texte extrait, puis pourront recevoir une conversion image avancee ensuite.</p>
+          <p class="muted">Pour les offres payantes, le modele final pourra etre marque comme paye/valide, telechargeable et reutilisable selon l'abonnement.</p>
         </div>"""
         self.send_html("Modeles", body)
 
@@ -1942,10 +2215,11 @@ class App(BaseHTTPRequestHandler):
             ai_status = "analyse_ia_terminee" if str(analysis.get("engine", "")).startswith("openai") else "preparation_locale"
             if analysis.get("ai_error"):
                 ai_status = "analyse_ia_erreur_mode_local"
+            paid_status = "admin_gratuit" if user["role"] == "admin" else "test_gratuit"
             with db() as con:
                 con.execute(
-                    "INSERT INTO cartouche_templates(user_id,name,source_type,source_file,theme_color,ai_status,analysis_json,analysis_summary,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                    (user["id"], name, source_type, str(saved_path), theme_color, ai_status, json.dumps(analysis, ensure_ascii=False), analysis_summary, "active", now()),
+                    "INSERT INTO cartouche_templates(user_id,name,source_type,source_file,theme_color,ai_status,analysis_json,analysis_summary,paid_status,final_template_file,last_used_at,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (user["id"], name, source_type, str(saved_path), theme_color, ai_status, json.dumps(analysis, ensure_ascii=False), analysis_summary, paid_status, "", "", "active", now()),
                 )
             self.templates_page(message + f"<p class='alert'>{html.escape(analysis_summary)}</p>")
         except Exception as exc:
