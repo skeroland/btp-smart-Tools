@@ -2,6 +2,7 @@
 
 import base64
 import cgi
+import csv
 import hashlib
 import html
 import io
@@ -35,6 +36,7 @@ UPLOADS = DATA / "uploads"
 OUTPUTS = DATA / "outputs"
 BATCHES = DATA / "batches"
 WORKSPACE_FILES = DATA / "workspace_files"
+PROFILE_UPLOADS = DATA / "profile_analyses"
 DB = DATA / "ske.db"
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "10000"))
@@ -113,6 +115,20 @@ PLAN_TYPE_OPTIONS = [
     "Plan de dallot",
     "Plan d'implantation",
     "Plan de fondations",
+]
+PROFILE_ANALYSIS_TYPES = [
+    "Profil en long",
+    "Profil en travers",
+    "Profil en travers type",
+    "Projet routier",
+    "Plan de route",
+    "Plan topographique",
+    "Plan beton",
+    "Plan ferraillage",
+    "Export Covadis",
+    "Fichier Excel / CSV",
+    "Image de profil",
+    "DWG / DXF",
 ]
 SCALE_OPTIONS = [
     "1/20",
@@ -268,7 +284,7 @@ def detect_image_style_color(path: Path, fallback: str = "#08213A") -> str:
 
 
 def ensure_dirs():
-    for path in (DATA, UPLOADS, OUTPUTS, BATCHES, WORKSPACE_FILES):
+    for path in (DATA, UPLOADS, OUTPUTS, BATCHES, WORKSPACE_FILES, PROFILE_UPLOADS):
         path.mkdir(parents=True, exist_ok=True)
 
 
@@ -407,6 +423,18 @@ def init_db():
                 status TEXT NOT NULL DEFAULT 'stocke',
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS profile_analyses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                project TEXT,
+                document_type TEXT NOT NULL,
+                source_file TEXT NOT NULL,
+                source_name TEXT NOT NULL,
+                analysis_json TEXT,
+                analysis_html TEXT,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
             """
         )
         for alter in [
@@ -447,6 +475,7 @@ def init_db():
             ("Cartouches automatiques", "Plans", "actif", "Generation PDF avec cartouches, cadres, legendes et informations projet."),
             ("Cartouches personnalisees", "Plans", "actif", "Import de modeles entreprise, preparation d'analyse locale et structure prete pour IA vision."),
         ("Assistant support", "Aide", "actif", "Accueil, guide d'utilisation, questions frequentes et support de premier niveau."),
+            ("Analyse profils routiers", "IA BTP", "actif", "Analyse de profils en long, profils en travers, plans routiers et explications techniques."),
             ("Analyse plans techniques", "IA BTP", "a_venir", "Lecture intelligente des plans, explications et annotations techniques."),
             ("Controle topo chantier", "Topographie", "a_venir", "Fiches voiles, radiers, ecarts et rapports PDF."),
             ("Dimensionnement BTP", "Bureau etudes", "a_venir", "Outils futurs pour routes, batiments et murs de soutenement."),
@@ -715,6 +744,237 @@ def summarize_template_analysis(analysis: dict) -> str:
     return f"Preparation locale terminee : orientation {orientation}, couleur principale {color}, fichier {size} Ko."
 
 
+def extract_profile_source_text(path: Path) -> str:
+    suffix = path.suffix.lower()
+    parts: list[str] = [f"Nom du fichier : {path.name}", f"Format : {suffix or 'sans extension'}"]
+    if suffix == ".pdf":
+        try:
+            reader = PdfReader(str(path))
+            for index, page in enumerate(reader.pages[:4], start=1):
+                text = page.extract_text() or ""
+                if text.strip():
+                    parts.append(f"--- Page {index} ---\n{text[:3500]}")
+        except Exception as exc:
+            parts.append(f"Lecture PDF limitee : {exc}")
+    elif suffix in (".txt", ".csv"):
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            raw = path.read_text(errors="replace")
+        if suffix == ".csv":
+            sample = []
+            try:
+                with path.open("r", encoding="utf-8", errors="replace", newline="") as f:
+                    dialect = csv.Sniffer().sniff(f.read(2048))
+                    f.seek(0)
+                    reader = csv.reader(f, dialect)
+                    for row in list(reader)[:25]:
+                        sample.append(" | ".join(row))
+                raw = "\n".join(sample) or raw
+            except Exception:
+                pass
+        parts.append(raw[:12000])
+    elif suffix == ".xlsx":
+        try:
+            from openpyxl import load_workbook
+
+            wb = load_workbook(path, read_only=True, data_only=True)
+            for sheet_name in wb.sheetnames[:3]:
+                sheet = wb[sheet_name]
+                rows = []
+                for row in sheet.iter_rows(max_row=35, max_col=12, values_only=True):
+                    values = ["" if value is None else str(value) for value in row]
+                    if any(values):
+                        rows.append(" | ".join(values))
+                if rows:
+                    parts.append(f"--- Feuille {sheet_name} ---\n" + "\n".join(rows))
+        except Exception as exc:
+            parts.append(f"Excel charge, extraction avancee non disponible : {exc}")
+    elif suffix in (".png", ".jpg", ".jpeg"):
+        try:
+            with Image.open(path) as img:
+                parts.append(f"Image lisible : {img.width} x {img.height} pixels. L'analyse visuelle IA peut detecter les textes et couches si l'API est disponible.")
+        except Exception as exc:
+            parts.append(f"Image non lisible localement : {exc}")
+    elif suffix in (".dwg", ".dxf"):
+        parts.append("Fichier AutoCAD/Covadis charge. L'analyse automatique complete du DWG demande une conversion ou une API CAO. Le fichier est conserve pour exploitation.")
+    return "\n\n".join(parts)[:16000]
+
+
+def profile_keywords(text: str) -> dict:
+    low = text.lower()
+    groups = {
+        "axes": ["axe", "alignement", "pk", "chainage", "abscisse"],
+        "chaussée": ["chaussee", "chaussée", "voie", "largeur", "plateforme"],
+        "bordures_caniveaux": ["bordure", "caniveau", "cunette", "fil d'eau", "fild'eau"],
+        "couches": ["pst", "couche de forme", "fondation", "base", "bitume", "grave", "0/25", "enrobe", "béton bitumineux", "beton bitumineux"],
+        "niveaux": ["altitude", "z=", "tn", "projet", "cote", "niveau"],
+        "pentes": ["pente", "%", "devers", "rampe"],
+        "terrassement": ["deblai", "déblai", "remblai", "purge", "terrassement", "volume"],
+        "ouvrages": ["dalot", "buse", "regard", "mur", "voile", "radier"],
+    }
+    return {name: any(keyword in low for keyword in keywords) for name, keywords in groups.items()}
+
+
+def local_profile_analysis(path: Path, document_type: str, project: str, source_text: str, ai_error: str = "") -> dict:
+    detected = profile_keywords(source_text)
+    present = [name.replace("_", " ") for name, ok in detected.items() if ok]
+    suffix = path.suffix.lower()
+    notes = []
+    if suffix in (".dwg", ".dxf"):
+        notes.append("Le fichier CAO est stocke. Pour lire toutes les entites DWG avec precision, il faudra ajouter un moteur CAO ou exporter le plan en PDF/DXF exploitable.")
+    if suffix in (".png", ".jpg", ".jpeg") and not OPENAI_API_KEY:
+        notes.append("L'image est prete, mais la lecture visuelle intelligente demande une cle IA active et du quota.")
+    if not present:
+        present = ["structure technique a confirmer", "annotations a verifier", "zones du projet a lire sur le plan"]
+    summary = (
+        f"Analyse locale du document {document_type}. Le systeme a conserve le fichier et prepare une lecture technique. "
+        f"Elements reperes : {', '.join(present)}."
+    )
+    return {
+        "engine": "local_profile_analyzer",
+        "status": "analyse_locale",
+        "project": project,
+        "document_type": document_type,
+        "source_file": path.name,
+        "summary": summary,
+        "detected_elements": present,
+        "technical_explanation": [
+            "Verifier l'axe du projet et les PK/chainages si presents.",
+            "Comparer les cotes TN et projet pour identifier les zones de remblai/deblai.",
+            "Controler les couches de chaussee : PST, forme, fondation, base et revetement.",
+            "Controler les bordures, caniveaux, ouvrages hydrauliques et raccordements.",
+        ],
+        "layers": ["PST", "Couche de forme", "Fondation", "Couche de base", "Revetement bitumineux"],
+        "risks": [
+            "Les altitudes et epaisseurs doivent etre confirmees sur le plan original.",
+            "Une lecture IA/OCR avancee donnera une interpretation plus precise des textes et symboles.",
+        ] + notes,
+        "recommendations": [
+            "Importer de preference un PDF lisible ou une image nette pour une meilleure analyse.",
+            "Ajouter le fichier Covadis/Excel si les altitudes, profils ou quantites existent dans un tableau.",
+            "Garder le resultat dans l'historique afin de comparer les versions du projet.",
+        ],
+        "ai_error": ai_error,
+    }
+
+
+def openai_profile_analysis(path: Path, document_type: str, project: str, source_text: str) -> dict | None:
+    if not OPENAI_API_KEY:
+        return None
+    prompt = """
+Tu es un ingenieur routier/topographe experimente.
+Analyse le document fourni comme un assistant technique qui explique un profil ou projet routier a un chef de projet.
+Retourne uniquement un JSON valide avec :
+- engine
+- confidence de 0 a 1
+- summary : resume simple
+- detected_elements : liste d'elements visibles ou probables
+- axes : explication de l'axe, PK, alignements
+- road_sections : largeurs, chaussee, trottoirs, bordures, caniveaux si detectes
+- layers : couches detectees avec role et epaisseur si visible
+- altitudes_slopes : altitudes, pentes, devers, raccordements si detectes
+- earthworks : remblai/deblai/purge/terrassement si detectes
+- risks : zones critiques ou points a verifier
+- recommendations : conseils pratiques chantier
+- simple_explanation : explication claire pour quelqu'un qui ne comprend pas bien le plan
+Si une information n'est pas visible, indique qu'elle est a confirmer au lieu d'inventer.
+Ne mets aucun texte hors JSON.
+"""
+    content: list[dict] = [
+        {"type": "input_text", "text": prompt},
+        {"type": "input_text", "text": f"Projet : {project or 'Non renseigne'}\nType de document : {document_type}\nTexte/metadonnees extraits :\n{source_text[:14000]}"},
+    ]
+    if path.suffix.lower() in (".png", ".jpg", ".jpeg"):
+        content.append({"type": "input_image", "image_url": image_data_url_for_ai(path)})
+    payload = {
+        "model": OPENAI_MODEL,
+        "input": [{"role": "user", "content": content}],
+        "temperature": 0.15,
+        "max_output_tokens": 2200,
+    }
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=55) as response:
+        raw = response.read().decode("utf-8", errors="replace")
+    api_response = json.loads(raw)
+    output_text = extract_output_text(api_response)
+    match = re.search(r"\{.*\}", output_text, re.S)
+    if not match:
+        raise ValueError("L'IA n'a pas retourne de JSON exploitable.")
+    analysis = json.loads(match.group(0))
+    analysis["engine"] = analysis.get("engine") or "openai_profile_analyzer"
+    analysis["model"] = OPENAI_MODEL
+    analysis["project"] = project
+    analysis["document_type"] = document_type
+    analysis["source_file"] = path.name
+    return analysis
+
+
+def build_profile_analysis(path: Path, document_type: str, project: str) -> dict:
+    source_text = extract_profile_source_text(path)
+    try:
+        ai_analysis = openai_profile_analysis(path, document_type, project, source_text)
+        if ai_analysis:
+            return ai_analysis
+    except Exception as exc:
+        return local_profile_analysis(path, document_type, project, source_text, str(exc))
+    return local_profile_analysis(path, document_type, project, source_text)
+
+
+def profile_list_html(title: str, value) -> str:
+    if not value:
+        return ""
+    if isinstance(value, str):
+        items = [value]
+    elif isinstance(value, dict):
+        items = [f"{k} : {v}" for k, v in value.items()]
+    else:
+        items = []
+        for item in value:
+            if isinstance(item, dict):
+                label = item.get("name") or item.get("element") or item.get("role") or item.get("type") or "Element"
+                detail = ", ".join(f"{k}: {v}" for k, v in item.items() if v and k not in ("name", "element", "role", "type"))
+                items.append(f"{label} - {detail}" if detail else str(label))
+            else:
+                items.append(str(item))
+    lis = "".join(f"<li>{html.escape(str(item))}</li>" for item in items if str(item).strip())
+    if not lis:
+        return ""
+    return f"<div class='card'><h3>{html.escape(title)}</h3><ul>{lis}</ul></div>"
+
+
+def render_profile_analysis_result(analysis: dict) -> str:
+    summary = html.escape(str(analysis.get("summary") or analysis.get("simple_explanation") or "Analyse preparee."))
+    confidence = analysis.get("confidence", "local")
+    engine = analysis.get("engine", "analyse_locale")
+    sections = [
+        profile_list_html("Elements detectes", analysis.get("detected_elements")),
+        profile_list_html("Axes / PK / alignements", analysis.get("axes")),
+        profile_list_html("Chaussee et sections", analysis.get("road_sections")),
+        profile_list_html("Couches de structure", analysis.get("layers")),
+        profile_list_html("Altitudes, pentes et raccordements", analysis.get("altitudes_slopes")),
+        profile_list_html("Terrassements remblai/deblai", analysis.get("earthworks")),
+        profile_list_html("Zones critiques", analysis.get("risks")),
+        profile_list_html("Recommandations chantier", analysis.get("recommendations")),
+    ]
+    if analysis.get("ai_error"):
+        sections.append(f"<p class='alert'>IA non finalisee : {html.escape(str(analysis.get('ai_error')))}</p>")
+    return f"""
+    <div class="card">
+      <span class="pill">Moteur : {html.escape(str(engine))}</span>
+      <span class="pill">Confiance : {html.escape(str(confidence))}</span>
+      <h2>Resume technique</h2>
+      <p>{summary}</p>
+    </div>
+    <div class="grid" style="margin-top:16px">{''.join(section for section in sections if section)}</div>
+    """
+
+
 def format_fcfa(value: int) -> str:
     return f"{value:,}".replace(",", " ") + " FCFA"
 
@@ -855,6 +1115,7 @@ def render_page(title: str, body: str, user: sqlite3.Row | None = None) -> bytes
         ("Generateur", "/generator"),
         ("Aide / Support", "/assistant"),
         ("Modeles", "/templates"),
+        ("Analyse profils", "/profile-analyzer"),
         ("IA Batch", "/batch"),
         ("Services BTP", "/services"),
     ]
@@ -1751,6 +2012,10 @@ class App(BaseHTTPRequestHandler):
             return self.template_file(path.split("/", 2)[2])
         if path.startswith("/template-analysis/"):
             return self.template_analysis(path.split("/", 2)[2])
+        if path == "/profile-analyzer":
+            return self.profile_analyzer()
+        if path.startswith("/profile-analysis/"):
+            return self.profile_analysis_detail(path.split("/", 2)[2])
         if path == "/batch":
             return self.batch_page()
         if path == "/services":
@@ -1789,6 +2054,8 @@ class App(BaseHTTPRequestHandler):
             return self.workspace_action()
         if path == "/templates":
             return self.templates_action()
+        if path == "/profile-analyzer":
+            return self.profile_analyzer_action()
         if path == "/batch":
             return self.batch_action()
         if path == "/payment":
@@ -1977,13 +2244,13 @@ class App(BaseHTTPRequestHandler):
             templates = con.execute("SELECT * FROM cartouche_templates WHERE user_id=? ORDER BY id DESC LIMIT 10", (user["id"],)).fetchall()
         project_options = "".join(f"<option value='{p['id']}'>{html.escape(p['name'])}</option>" for p in projects)
         project_rows = "".join(
-            f"<tr><td>{html.escape(p['name'])}</td><td>{html.escape(p['client'] or '')}</td><td>{html.escape(p['location'] or '')}</td><td>{html.escape(p['status'])}</td><td>{html.escape(p['created_at'])}</td></tr>"
+            f"<tr><td>{html.escape(p['name'])}</td><td>{html.escape(p['client'] or '')}</td><td>{html.escape(p['location'] or '')}</td><td>{html.escape(p['status'])}</td><td>{html.escape(p['created_at'])}</td><td><form method='post' action='/workspace' onsubmit=\"return confirm('Supprimer ce projet ? Les documents seront remis en Non classe.');\"><input type='hidden' name='action' value='delete_project'><input type='hidden' name='project_id' value='{p['id']}'><button class='red'>Supprimer</button></form></td></tr>"
             for p in projects
-        ) or "<tr><td colspan='5'>Aucun projet pour le moment.</td></tr>"
+        ) or "<tr><td colspan='6'>Aucun projet pour le moment.</td></tr>"
         doc_rows = "".join(
-            f"<tr><td>{html.escape(d['title'])}</td><td>{html.escape(d['category'])}</td><td>{html.escape(d['project_name'] or 'Non classe')}</td><td>{html.escape(d['version_label'])}</td><td>{round(float(d['size_kb'] or 0), 1)} Ko</td><td>{html.escape(d['created_at'])}</td><td><a href='{download_url(d['stored_file'])}'>Telecharger</a></td></tr>"
+            f"<tr><td>{html.escape(d['title'])}</td><td>{html.escape(d['category'])}</td><td>{html.escape(d['project_name'] or 'Non classe')}</td><td>{html.escape(d['version_label'])}</td><td>{round(float(d['size_kb'] or 0), 1)} Ko</td><td>{html.escape(d['created_at'])}</td><td><a href='{download_url(d['stored_file'])}'>Telecharger</a></td><td><form method='post' action='/workspace' onsubmit=\"return confirm('Supprimer ce document ?');\"><input type='hidden' name='action' value='delete_document'><input type='hidden' name='document_id' value='{d['id']}'><button class='red'>Supprimer</button></form></td></tr>"
             for d in docs
-        ) or "<tr><td colspan='7'>Aucun document stocke.</td></tr>"
+        ) or "<tr><td colspan='8'>Aucun document stocke.</td></tr>"
         template_rows = "".join(
             f"<tr><td>{html.escape(t['name'])}</td><td>{html.escape(t['ai_status'])}</td><td>{html.escape(t['paid_status'] if 'paid_status' in t.keys() else 'test_gratuit')}</td><td><a href='/template-analysis/{t['id']}'>Analyse</a></td></tr>"
             for t in templates
@@ -2025,12 +2292,12 @@ class App(BaseHTTPRequestHandler):
             <button class="purple">Stocker dans mon espace</button>
           </form>
         </div>
-        <div class="card" style="margin-top:16px"><h3>Projets / chantiers</h3><table><tr><th>Projet</th><th>Client</th><th>Localisation</th><th>Statut</th><th>Date</th></tr>{project_rows}</table></div>
+        <div class="card" style="margin-top:16px"><h3>Projets / chantiers</h3><table><tr><th>Projet</th><th>Client</th><th>Localisation</th><th>Statut</th><th>Date</th><th>Action</th></tr>{project_rows}</table></div>
         <div class="card" style="margin-top:16px">
           <h3>Recherche intelligente simple</h3>
           <form method="get" action="/workspace" class="row"><input name="q" value="{html.escape(q)}" placeholder="Rechercher par projet, fichier, type, chantier..." style="max-width:520px"><button>Rechercher</button><a class="btn dark" href="/workspace">Tout afficher</a></form>
         </div>
-        <div class="card" style="margin-top:16px"><h3>Documents stockes</h3><table><tr><th>Titre</th><th>Categorie</th><th>Projet</th><th>Version</th><th>Taille</th><th>Date</th><th>Fichier</th></tr>{doc_rows}</table></div>
+        <div class="card" style="margin-top:16px"><h3>Documents stockes</h3><table><tr><th>Titre</th><th>Categorie</th><th>Projet</th><th>Version</th><th>Taille</th><th>Date</th><th>Fichier</th><th>Action</th></tr>{doc_rows}</table></div>
         <div class="card" style="margin-top:16px"><h3>Modeles de cartouches lies au compte</h3><table><tr><th>Modele</th><th>Analyse</th><th>Acces</th><th>Action</th></tr>{template_rows}</table></div>
         """
         self.send_html("Espace entreprise", body)
@@ -2107,6 +2374,35 @@ class App(BaseHTTPRequestHandler):
                     (user["id"], space["id"], name, client, location, "actif", now()),
                 )
             return self.workspace("<p class='alert'>Projet cree dans l'espace entreprise.</p>")
+        if form.get("action") == "delete_document":
+            try:
+                document_id = int(form.get("document_id") or 0)
+            except Exception:
+                document_id = 0
+            with db() as con:
+                doc = con.execute("SELECT * FROM workspace_documents WHERE id=? AND user_id=?", (document_id, user["id"])).fetchone()
+                if not doc:
+                    return self.workspace("<p class='alert'>Document introuvable ou non autorise.</p>")
+                path = Path(doc["stored_file"])
+                con.execute("DELETE FROM workspace_documents WHERE id=? AND user_id=?", (document_id, user["id"]))
+            try:
+                if path.exists() and WORKSPACE_FILES in path.resolve().parents:
+                    path.unlink()
+            except Exception:
+                pass
+            return self.workspace("<p class='alert'>Document supprime.</p>")
+        if form.get("action") == "delete_project":
+            try:
+                project_id = int(form.get("project_id") or 0)
+            except Exception:
+                project_id = 0
+            with db() as con:
+                project = con.execute("SELECT * FROM workspace_projects WHERE id=? AND user_id=?", (project_id, user["id"])).fetchone()
+                if not project:
+                    return self.workspace("<p class='alert'>Projet introuvable ou non autorise.</p>")
+                con.execute("UPDATE workspace_documents SET project_id=NULL WHERE project_id=? AND user_id=?", (project_id, user["id"]))
+                con.execute("DELETE FROM workspace_projects WHERE id=? AND user_id=?", (project_id, user["id"]))
+            return self.workspace("<p class='alert'>Projet supprime. Les documents associes sont conserves en Non classe.</p>")
         return self.workspace("<p class='alert'>Action non reconnue.</p>")
 
     def templates_page(self, message: str = ""):
@@ -2224,6 +2520,125 @@ class App(BaseHTTPRequestHandler):
             self.templates_page(message + f"<p class='alert'>{html.escape(analysis_summary)}</p>")
         except Exception as exc:
             self.templates_page(f"<p class='alert'>Import impossible : {html.escape(str(exc))}</p>")
+
+    def profile_analyzer(self, message: str = "", result_html: str = ""):
+        user = self.require_login()
+        if not user:
+            return
+        type_options = "".join(f"<option>{html.escape(value)}</option>" for value in PROFILE_ANALYSIS_TYPES)
+        with db() as con:
+            rows_data = con.execute(
+                "SELECT * FROM profile_analyses WHERE user_id=? ORDER BY id DESC LIMIT 12",
+                (user["id"],),
+            ).fetchall()
+        rows = "".join(
+            f"<tr><td>{html.escape(row['project'] or 'Non renseigne')}</td><td>{html.escape(row['document_type'])}</td><td>{html.escape(row['source_name'])}</td><td>{html.escape(row['status'])}</td><td>{html.escape(row['created_at'])}</td><td><a href='/profile-analysis/{row['id']}'>Voir</a></td></tr>"
+            for row in rows_data
+        ) or "<tr><td colspan='6'>Aucune analyse de profil pour le moment.</td></tr>"
+        body = f"""
+        <div class="hero" style="grid-template-columns:1fr; padding:34px">
+          <div>
+            <span class="pill">Nouveau module actif</span>
+            <h1 style="font-size:54px">Analyse profils routiers</h1>
+            <h2>Charge un profil ou un plan, puis le systeme explique le projet comme un technicien BTP.</h2>
+            <p>Le module peut recevoir PDF, images, CSV/TXT, Excel, DWG/DXF. Il conserve le fichier, prepare l'analyse et affiche les axes, couches, altitudes, pentes, terrassements, risques et recommandations.</p>
+          </div>
+        </div>
+        <div class="grid" style="margin-top:16px">
+          <form class="card" method="post" action="/profile-analyzer" enctype="multipart/form-data">
+            <h2>Analyser un profil / plan</h2>
+            {message}
+            <label>Projet / chantier</label>
+            <input name="project" value="Jardin Botanique" placeholder="Ex : Jardin Botanique, Canal Gustave">
+            <label>Type de document</label>
+            <select name="document_type">{type_options}</select>
+            <label>Fichier a analyser</label>
+            <input type="file" name="profile_file" accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.xlsx,.xls,.dwg,.dxf" required>
+            <button class="green">Analyser le profil</button>
+            <p class="muted">Avec la cle OpenAI active et du credit disponible, l'analyse devient visuelle et plus intelligente. Sinon, une analyse locale de secours reste disponible.</p>
+          </form>
+          <div class="card">
+            <h2>Ce que l'analyse doit expliquer</h2>
+            <div class="grid3">
+              <div class="stat"><b>Axe</b>PK, emprise, alignement</div>
+              <div class="stat"><b>Route</b>Chaussee, trottoir, bordure</div>
+              <div class="stat"><b>Couches</b>PST, forme, fondation, base</div>
+              <div class="stat"><b>Niveaux</b>Altitudes, pentes, raccordements</div>
+              <div class="stat"><b>Terrassement</b>Remblai, deblai, purge</div>
+              <div class="stat"><b>Conseils</b>Risques et points a verifier</div>
+            </div>
+          </div>
+        </div>
+        {result_html}
+        <div class="card" style="margin-top:16px">
+          <h2>Historique des analyses</h2>
+          <table><tr><th>Projet</th><th>Type</th><th>Fichier</th><th>Statut</th><th>Date</th><th>Action</th></tr>{rows}</table>
+        </div>
+        """
+        self.send_html("Analyse profils routiers", body)
+
+    def profile_analyzer_action(self):
+        user = self.require_login()
+        if not user:
+            return
+        try:
+            form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": self.headers.get("Content-Type")})
+            project = (form.getfirst("project") or "Projet BTP").strip()
+            document_type = (form.getfirst("document_type") or "Profil routier").strip()
+            item = form["profile_file"] if "profile_file" in form else None
+            if item is None or not getattr(item, "filename", ""):
+                return self.profile_analyzer("<p class='alert'>Choisis d'abord un fichier a analyser.</p>")
+            suffix = Path(item.filename).suffix.lower()
+            accepted = (".pdf", ".png", ".jpg", ".jpeg", ".txt", ".csv", ".xlsx", ".xls", ".dwg", ".dxf")
+            if suffix not in accepted:
+                return self.profile_analyzer("<p class='alert'>Format non accepte pour le moment. Utilise PDF, image, TXT/CSV, Excel ou DWG/DXF.</p>")
+            user_dir = PROFILE_UPLOADS / f"user_{user['id']}"
+            user_dir.mkdir(parents=True, exist_ok=True)
+            saved_name = f"profile_{int(time.time())}_{secrets.token_hex(4)}_{safe_file(Path(item.filename).stem)}{suffix}"
+            saved_path = user_dir / saved_name
+            with saved_path.open("wb") as f:
+                shutil.copyfileobj(item.file, f)
+            if saved_path.stat().st_size == 0:
+                saved_path.unlink(missing_ok=True)
+                return self.profile_analyzer("<p class='alert'>Le fichier est vide. Choisis un document valide.</p>")
+            analysis = build_profile_analysis(saved_path, document_type, project)
+            result_html = render_profile_analysis_result(analysis)
+            status = "analyse_ia_terminee" if str(analysis.get("engine", "")).startswith("openai") else "analyse_locale"
+            if analysis.get("ai_error"):
+                status = "analyse_locale_ia_limitee"
+            with db() as con:
+                con.execute(
+                    "INSERT INTO profile_analyses(user_id,project,document_type,source_file,source_name,analysis_json,analysis_html,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (user["id"], project, document_type, str(saved_path), item.filename, json.dumps(analysis, ensure_ascii=False), result_html, status, now()),
+                )
+            return self.profile_analyzer("<p class='alert'>Analyse terminee et sauvegardee dans ton historique.</p>", result_html)
+        except Exception as exc:
+            return self.profile_analyzer(f"<p class='alert'>Analyse impossible : {html.escape(str(exc))}</p>")
+
+    def profile_analysis_detail(self, analysis_id: str):
+        user = self.require_login()
+        if not user:
+            return
+        try:
+            aid = int(analysis_id)
+        except Exception:
+            return self.send_html("Analyse introuvable", "<div class='card'><h2>Analyse introuvable</h2></div>", 404)
+        with db() as con:
+            row = con.execute("SELECT * FROM profile_analyses WHERE id=? AND user_id=?", (aid, user["id"])).fetchone()
+        if not row:
+            return self.send_html("Analyse introuvable", "<div class='card'><h2>Analyse introuvable ou non autorisee.</h2></div>", 404)
+        body = f"""
+        <div class="card">
+          <h2>Analyse sauvegardee</h2>
+          <p><b>Projet :</b> {html.escape(row['project'] or '')}</p>
+          <p><b>Type :</b> {html.escape(row['document_type'])}</p>
+          <p><b>Fichier :</b> {html.escape(row['source_name'])}</p>
+          <p><b>Date :</b> {html.escape(row['created_at'])}</p>
+          <p><a class="btn" href="/profile-analyzer">Retour a l'analyseur</a></p>
+        </div>
+        {row['analysis_html'] or render_profile_analysis_result(json.loads(row['analysis_json'] or '{}'))}
+        """
+        self.send_html("Analyse sauvegardee", body)
 
     def template_file(self, template_id: str):
         user = self.require_login()
