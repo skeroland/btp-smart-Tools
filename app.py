@@ -975,6 +975,77 @@ def render_profile_analysis_result(analysis: dict) -> str:
     """
 
 
+def render_profile_visual(source_url: str, source_name: str, analysis: dict) -> str:
+    suffix = Path(source_name).suffix.lower()
+    detected = analysis.get("detected_elements") or []
+    if isinstance(detected, str):
+        detected = [detected]
+    chips = "".join(f"<span class='pill'>{html.escape(str(item))}</span>" for item in detected[:10])
+    if not chips:
+        chips = "<span class='pill'>Axe</span><span class='pill'>Cotes</span><span class='pill'>Couches</span>"
+    if suffix in (".png", ".jpg", ".jpeg"):
+        preview = f"<img src='{html.escape(source_url)}' alt='Apercu du document' style='max-width:100%;max-height:640px;object-fit:contain;background:white;border-radius:10px'>"
+    elif suffix == ".pdf":
+        preview = f"<iframe src='{html.escape(source_url)}' title='Apercu PDF' style='width:100%;height:640px;border:0;background:white;border-radius:10px'></iframe>"
+    else:
+        preview = """
+        <div class="profile-schematic">
+          <svg viewBox="0 0 900 420" width="100%" height="420">
+            <rect x="30" y="30" width="840" height="340" rx="10" fill="#f8fafc" stroke="#203044" stroke-width="2"/>
+            <line x1="450" y1="60" x2="450" y2="340" stroke="#ef4444" stroke-width="3" stroke-dasharray="8 8"/>
+            <text x="462" y="82" fill="#ef4444" font-size="22" font-weight="700">AXE</text>
+            <polyline points="90,210 260,180 450,145 640,180 810,210" fill="none" stroke="#0f766e" stroke-width="5"/>
+            <text x="610" y="166" fill="#0f766e" font-size="20" font-weight="700">Cote projet</text>
+            <polyline points="90,255 260,235 450,210 640,238 810,260" fill="none" stroke="#64748b" stroke-width="4" stroke-dasharray="10 8"/>
+            <text x="120" y="285" fill="#64748b" font-size="20" font-weight="700">Terrain naturel</text>
+            <path d="M160 250 L740 250 L705 285 L195 285 Z" fill="#facc15" opacity=".75" stroke="#b45309"/>
+            <text x="350" y="277" fill="#713f12" font-size="20" font-weight="700">PST / Couche de forme</text>
+            <path d="M210 210 L690 210 L740 250 L160 250 Z" fill="#93c5fd" opacity=".85" stroke="#1d4ed8"/>
+            <text x="360" y="238" fill="#1e3a8a" font-size="20" font-weight="700">Base / Fondation</text>
+            <line x1="450" y1="145" x2="260" y2="180" stroke="#2f8cff" stroke-width="2" marker-end="url(#arrow)"/>
+            <line x1="450" y1="145" x2="640" y2="180" stroke="#2f8cff" stroke-width="2" marker-end="url(#arrow)"/>
+            <text x="310" y="132" fill="#2f8cff" font-size="19" font-weight="700">Pente vers les cotes</text>
+            <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#2f8cff"/></marker></defs>
+          </svg>
+          <p class="muted">Apercu technique genere pour les fichiers non affichables directement dans le navigateur. Pour une analyse visuelle exacte, importer aussi un PDF ou une image du profil.</p>
+        </div>
+        """
+    return f"""
+    <div class="card profile-visual-card">
+      <h2>Lecture visuelle du document</h2>
+      <p class="muted">Le fichier charge reste visible pendant l'analyse. Les repères ci-dessous guident la lecture comme sur un contrôle de profil.</p>
+      <div class="profile-tags">{chips}</div>
+      <div class="profile-viewer">
+        {preview}
+        <div class="profile-overlay-note">
+          <b>Repères à vérifier</b>
+          <span>Axe / TN / Projet / PST / couches / pentes / talus</span>
+        </div>
+      </div>
+    </div>
+    """
+
+
+def render_profile_workspace(analysis: dict, source_url: str, source_name: str) -> str:
+    return f"""
+    <div class="grid" style="grid-template-columns:1.25fr .75fr;margin-top:16px">
+      {render_profile_visual(source_url, source_name, analysis)}
+      <div>
+        {render_profile_analysis_result(analysis)}
+      </div>
+    </div>
+    <style>
+    .profile-viewer{{position:relative;margin-top:14px;background:#0f172a;border:1px solid rgba(148,163,184,.24);border-radius:12px;padding:12px;min-height:460px;display:flex;align-items:center;justify-content:center;overflow:hidden}}
+    .profile-overlay-note{{position:absolute;left:22px;top:22px;background:rgba(5,11,20,.86);border:1px solid rgba(34,211,238,.35);border-radius:10px;padding:10px 12px;max-width:280px;box-shadow:0 12px 30px rgba(0,0,0,.28)}}
+    .profile-overlay-note b{{display:block;color:#8deeff;margin-bottom:4px}}
+    .profile-overlay-note span{{font-size:12px;color:#dbeafe}}
+    .profile-tags{{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}}
+    .profile-schematic{{width:100%;background:#fff;border-radius:10px;padding:10px;color:#102033}}
+    @media(max-width:900px){{.grid[style*="1.25fr"]{{grid-template-columns:1fr!important}}.profile-viewer{{min-height:320px}}.profile-viewer iframe{{height:420px!important}}}}
+    </style>
+    """
+
+
 def format_fcfa(value: int) -> str:
     return f"{value:,}".replace(",", " ") + " FCFA"
 
@@ -2016,6 +2087,8 @@ class App(BaseHTTPRequestHandler):
             return self.profile_analyzer()
         if path.startswith("/profile-analysis/"):
             return self.profile_analysis_detail(path.split("/", 2)[2])
+        if path.startswith("/profile-source/"):
+            return self.profile_source(path.split("/", 2)[2])
         if path == "/batch":
             return self.batch_page()
         if path == "/services":
@@ -2602,15 +2675,17 @@ class App(BaseHTTPRequestHandler):
                 saved_path.unlink(missing_ok=True)
                 return self.profile_analyzer("<p class='alert'>Le fichier est vide. Choisis un document valide.</p>")
             analysis = build_profile_analysis(saved_path, document_type, project)
-            result_html = render_profile_analysis_result(analysis)
             status = "analyse_ia_terminee" if str(analysis.get("engine", "")).startswith("openai") else "analyse_locale"
             if analysis.get("ai_error"):
                 status = "analyse_locale_ia_limitee"
             with db() as con:
-                con.execute(
+                cur = con.execute(
                     "INSERT INTO profile_analyses(user_id,project,document_type,source_file,source_name,analysis_json,analysis_html,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                    (user["id"], project, document_type, str(saved_path), item.filename, json.dumps(analysis, ensure_ascii=False), result_html, status, now()),
+                    (user["id"], project, document_type, str(saved_path), item.filename, json.dumps(analysis, ensure_ascii=False), "", status, now()),
                 )
+                analysis_id = cur.lastrowid
+                result_html = render_profile_workspace(analysis, f"/profile-source/{analysis_id}", item.filename)
+                con.execute("UPDATE profile_analyses SET analysis_html=? WHERE id=?", (result_html, analysis_id))
             return self.profile_analyzer("<p class='alert'>Analyse terminee et sauvegardee dans ton historique.</p>", result_html)
         except Exception as exc:
             return self.profile_analyzer(f"<p class='alert'>Analyse impossible : {html.escape(str(exc))}</p>")
@@ -2627,6 +2702,8 @@ class App(BaseHTTPRequestHandler):
             row = con.execute("SELECT * FROM profile_analyses WHERE id=? AND user_id=?", (aid, user["id"])).fetchone()
         if not row:
             return self.send_html("Analyse introuvable", "<div class='card'><h2>Analyse introuvable ou non autorisee.</h2></div>", 404)
+        analysis = json.loads(row["analysis_json"] or "{}")
+        visual_html = render_profile_workspace(analysis, f"/profile-source/{row['id']}", row["source_name"])
         body = f"""
         <div class="card">
           <h2>Analyse sauvegardee</h2>
@@ -2636,9 +2713,41 @@ class App(BaseHTTPRequestHandler):
           <p><b>Date :</b> {html.escape(row['created_at'])}</p>
           <p><a class="btn" href="/profile-analyzer">Retour a l'analyseur</a></p>
         </div>
-        {row['analysis_html'] or render_profile_analysis_result(json.loads(row['analysis_json'] or '{}'))}
+        {visual_html}
         """
         self.send_html("Analyse sauvegardee", body)
+
+    def profile_source(self, analysis_id: str):
+        user = self.require_login()
+        if not user:
+            return
+        try:
+            aid = int(analysis_id)
+        except Exception:
+            return self.send_html("Fichier introuvable", "<div class='card'><h2>Fichier introuvable.</h2></div>", 404)
+        with db() as con:
+            row = con.execute("SELECT * FROM profile_analyses WHERE id=? AND user_id=?", (aid, user["id"])).fetchone()
+        if not row:
+            return self.send_html("Fichier introuvable", "<div class='card'><h2>Fichier introuvable ou non autorise.</h2></div>", 404)
+        path = Path(row["source_file"])
+        if not path.exists():
+            return self.send_html("Fichier introuvable", "<div class='card'><h2>Le fichier source n'est plus disponible.</h2></div>", 404)
+        suffix = path.suffix.lower()
+        content_types = {
+            ".pdf": "application/pdf",
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".txt": "text/plain; charset=utf-8",
+            ".csv": "text/plain; charset=utf-8",
+        }
+        data = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_types.get(suffix, "application/octet-stream"))
+        self.send_header("Content-Disposition", f"inline; filename*=UTF-8''{urllib.parse.quote(row['source_name'])}")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def template_file(self, template_id: str):
         user = self.require_login()
