@@ -797,7 +797,21 @@ def extract_profile_source_text(path: Path) -> str:
         except Exception as exc:
             parts.append(f"Image non lisible localement : {exc}")
     elif suffix in (".dwg", ".dxf"):
-        parts.append("Fichier AutoCAD/Covadis charge. L'analyse automatique complete du DWG demande une conversion ou une API CAO. Le fichier est conserve pour exploitation.")
+        if suffix == ".dxf":
+            try:
+                raw = path.read_text(encoding="utf-8", errors="replace")
+                parts.append("DXF lisible en texte technique. Extrait brut :\n" + raw[:9000])
+            except Exception:
+                parts.append("Fichier DXF charge. La lecture complete demande un parseur CAO avance.")
+        else:
+            parts.append("Fichier DWG AutoCAD/Covadis charge. Le DWG n'est pas lisible directement par un navigateur web sans moteur CAO. Le fichier est conserve pour conversion/analyse avancee.")
+    elif suffix == ".zip":
+        try:
+            with zipfile.ZipFile(path, "r") as zf:
+                names = zf.namelist()[:80]
+            parts.append("Archive ZIP detectee. Contenu partiel :\n" + "\n".join(names))
+        except Exception as exc:
+            parts.append(f"Archive ZIP non lisible : {exc}")
     return "\n\n".join(parts)[:16000]
 
 
@@ -857,6 +871,89 @@ def local_profile_analysis(path: Path, document_type: str, project: str, source_
         ],
         "ai_error": ai_error,
     }
+
+
+def technical_file_capability(path: Path | None, source_name: str = "") -> dict:
+    suffix = (path.suffix if path else Path(source_name).suffix).lower()
+    direct = suffix in (".pdf", ".png", ".jpg", ".jpeg", ".txt", ".csv", ".xlsx")
+    if suffix in (".pdf",):
+        return {
+            "format": "PDF",
+            "status": "lisible_directement",
+            "label": "PDF lisible directement",
+            "message": "Le plan PDF peut etre affiche dans le navigateur, zoome et analyse.",
+            "next_steps": ["Analyse OCR/IA possible", "Apercu exact du PDF", "Conservation du fichier original"],
+        }
+    if suffix in (".png", ".jpg", ".jpeg"):
+        return {
+            "format": "Image / scan",
+            "status": "lisible_directement",
+            "label": "Image lisible directement",
+            "message": "Le plan ou profil image peut etre affiche et envoye a l'analyse visuelle IA.",
+            "next_steps": ["Zoom visuel", "Detection des textes si quota IA disponible", "Annotations futures sur image"],
+        }
+    if suffix in (".xlsx", ".xls"):
+        return {
+            "format": "Excel",
+            "status": "tableau_extrait",
+            "label": "Excel lisible en tableau",
+            "message": "Le systeme extrait les premieres lignes du classeur pour controler profils, cotes et coordonnees.",
+            "next_steps": ["Lecture des colonnes", "Detection X/Y/Z si possible", "Analyse des chainages et altitudes"],
+        }
+    if suffix in (".txt", ".csv", ".pts", ".asc", ".xyz"):
+        return {
+            "format": "Topo texte",
+            "status": "texte_lisible",
+            "label": "Fichier texte lisible",
+            "message": "Le contenu brut est affiche et peut etre nettoye/analyse ligne par ligne.",
+            "next_steps": ["Controle format", "Detection points", "Conversion Covadis/station possible"],
+        }
+    if suffix == ".dxf":
+        return {
+            "format": "DXF",
+            "status": "lecture_partielle",
+            "label": "DXF partiellement exploitable",
+            "message": "Le DXF peut etre inspecte comme fichier technique. Un rendu graphique exact demandera un moteur CAO.",
+            "next_steps": ["Extraction future des calques", "Conversion future en SVG/PDF", "Analyse IA apres rendu image"],
+        }
+    if suffix == ".dwg":
+        return {
+            "format": "DWG",
+            "status": "conversion_requise",
+            "label": "DWG : conversion requise",
+            "message": "Le DWG ne s'affiche pas directement dans un navigateur. Pour un rendu exact, il faudra connecter un moteur CAO comme Autodesk Platform Services, ODA/Teigha ou une conversion AutoCAD serveur.",
+            "next_steps": ["Conserver le DWG original", "Convertir en PDF/image haute qualite", "Analyser le rendu converti", "Ajouter plus tard un mini viewer CAO"],
+        }
+    if suffix == ".zip":
+        return {
+            "format": "ZIP",
+            "status": "archive_detectee",
+            "label": "Archive ZIP detectee",
+            "message": "Le systeme peut lister le contenu et preparer les fichiers internes. L'analyse automatique complete dependra des formats contenus dans le ZIP.",
+            "next_steps": ["Lister fichiers internes", "Extraire PDF/images/Excel", "Preparer DWG/DXF pour conversion"],
+        }
+    return {
+        "format": suffix or "Inconnu",
+        "status": "format_a_confirmer",
+        "label": "Format a confirmer",
+        "message": "Le fichier est stocke mais ce format demande une regle de lecture supplementaire.",
+        "next_steps": ["Conserver le fichier", "Identifier le format", "Ajouter un convertisseur adapte"],
+    }
+
+
+def render_compatibility_panel(capability: dict) -> str:
+    status = html.escape(str(capability.get("status", "")))
+    steps = capability.get("next_steps") or []
+    step_html = "".join(f"<li>{html.escape(str(step))}</li>" for step in steps)
+    return f"""
+    <div class="card">
+      <span class="pill">Format : {html.escape(str(capability.get('format','')))}</span>
+      <span class="pill">Statut : {status}</span>
+      <h3>{html.escape(str(capability.get('label','Compatibilite fichier')))}</h3>
+      <p>{html.escape(str(capability.get('message','')))}</p>
+      <ul>{step_html}</ul>
+    </div>
+    """
 
 
 def openai_profile_analysis(path: Path, document_type: str, project: str, source_text: str) -> dict | None:
@@ -975,7 +1072,51 @@ def render_profile_analysis_result(analysis: dict) -> str:
     """
 
 
-def render_profile_visual(source_url: str, source_name: str, analysis: dict) -> str:
+def profile_source_preview_html(source_path: Path | None, source_name: str) -> str:
+    if not source_path or not source_path.exists():
+        return "<p class='alert'>Le fichier source n'est plus disponible pour l'aperçu.</p>"
+    suffix = source_path.suffix.lower()
+    if suffix in (".txt", ".csv", ".pts", ".asc", ".xyz"):
+        try:
+            text = source_path.read_text(encoding="utf-8-sig", errors="replace")
+        except Exception:
+            text = source_path.read_text(errors="replace")
+        return f"<pre class='profile-text-preview'>{html.escape(text[:24000])}</pre>"
+    if suffix == ".xlsx":
+        try:
+            from openpyxl import load_workbook
+
+            wb = load_workbook(source_path, read_only=True, data_only=True)
+            ws = wb.worksheets[0]
+            rows = []
+            for row in ws.iter_rows(max_row=45, max_col=12, values_only=True):
+                cells = "".join(f"<td>{html.escape('' if value is None else str(value))}</td>" for value in row)
+                if cells.strip():
+                    rows.append(f"<tr>{cells}</tr>")
+            return f"<div class='profile-table-preview'><p class='muted'>Aperçu réel de la première feuille Excel : {html.escape(ws.title)}</p><table>{''.join(rows)}</table></div>"
+        except Exception as exc:
+            return f"<p class='alert'>Aperçu Excel impossible : {html.escape(str(exc))}</p>"
+    if suffix in (".dwg", ".dxf"):
+        return f"""
+        <div class="profile-schematic">
+          <h3>Fichier AutoCAD chargé</h3>
+          <p>Le navigateur ne peut pas afficher directement un fichier DWG/DXF comme AutoCAD.</p>
+          <p><b>Fichier reçu :</b> {html.escape(source_name)}</p>
+          <p>Le fichier est bien stocké pour l'analyse. Pour afficher exactement le dessin, il faudra générer une image/PDF depuis AutoCAD ou ajouter plus tard un moteur de conversion DWG côté serveur.</p>
+        </div>
+        """
+    if suffix == ".zip":
+        try:
+            with zipfile.ZipFile(source_path, "r") as zf:
+                names = zf.namelist()[:120]
+            rows = "".join(f"<tr><td>{html.escape(name)}</td><td>{html.escape(Path(name).suffix.lower() or 'dossier')}</td></tr>" for name in names)
+            return f"<div class='profile-table-preview'><p class='muted'>Contenu reel de l'archive ZIP.</p><table><tr><th>Fichier</th><th>Type</th></tr>{rows}</table></div>"
+        except Exception as exc:
+            return f"<p class='alert'>Archive ZIP non lisible : {html.escape(str(exc))}</p>"
+    return f"<p class='alert'>Aperçu direct non disponible pour ce format : {html.escape(source_path.suffix)}</p>"
+
+
+def render_profile_visual(source_url: str, source_name: str, analysis: dict, source_path: Path | None = None) -> str:
     suffix = Path(source_name).suffix.lower()
     detected = analysis.get("detected_elements") or []
     if isinstance(detected, str):
@@ -986,30 +1127,9 @@ def render_profile_visual(source_url: str, source_name: str, analysis: dict) -> 
     if suffix in (".png", ".jpg", ".jpeg"):
         preview = f"<img src='{html.escape(source_url)}' alt='Apercu du document' style='max-width:100%;max-height:640px;object-fit:contain;background:white;border-radius:10px'>"
     elif suffix == ".pdf":
-        preview = f"<iframe src='{html.escape(source_url)}' title='Apercu PDF' style='width:100%;height:640px;border:0;background:white;border-radius:10px'></iframe>"
+        preview = f"<iframe src='{html.escape(source_url)}' title='Apercu PDF' style='width:100%;height:640px;border:0;background:white;border-radius:10px'></iframe><p class='muted'><a href='{html.escape(source_url)}' target='_blank'>Ouvrir le fichier original dans un nouvel onglet</a></p>"
     else:
-        preview = """
-        <div class="profile-schematic">
-          <svg viewBox="0 0 900 420" width="100%" height="420">
-            <rect x="30" y="30" width="840" height="340" rx="10" fill="#f8fafc" stroke="#203044" stroke-width="2"/>
-            <line x1="450" y1="60" x2="450" y2="340" stroke="#ef4444" stroke-width="3" stroke-dasharray="8 8"/>
-            <text x="462" y="82" fill="#ef4444" font-size="22" font-weight="700">AXE</text>
-            <polyline points="90,210 260,180 450,145 640,180 810,210" fill="none" stroke="#0f766e" stroke-width="5"/>
-            <text x="610" y="166" fill="#0f766e" font-size="20" font-weight="700">Cote projet</text>
-            <polyline points="90,255 260,235 450,210 640,238 810,260" fill="none" stroke="#64748b" stroke-width="4" stroke-dasharray="10 8"/>
-            <text x="120" y="285" fill="#64748b" font-size="20" font-weight="700">Terrain naturel</text>
-            <path d="M160 250 L740 250 L705 285 L195 285 Z" fill="#facc15" opacity=".75" stroke="#b45309"/>
-            <text x="350" y="277" fill="#713f12" font-size="20" font-weight="700">PST / Couche de forme</text>
-            <path d="M210 210 L690 210 L740 250 L160 250 Z" fill="#93c5fd" opacity=".85" stroke="#1d4ed8"/>
-            <text x="360" y="238" fill="#1e3a8a" font-size="20" font-weight="700">Base / Fondation</text>
-            <line x1="450" y1="145" x2="260" y2="180" stroke="#2f8cff" stroke-width="2" marker-end="url(#arrow)"/>
-            <line x1="450" y1="145" x2="640" y2="180" stroke="#2f8cff" stroke-width="2" marker-end="url(#arrow)"/>
-            <text x="310" y="132" fill="#2f8cff" font-size="19" font-weight="700">Pente vers les cotes</text>
-            <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#2f8cff"/></marker></defs>
-          </svg>
-          <p class="muted">Apercu technique genere pour les fichiers non affichables directement dans le navigateur. Pour une analyse visuelle exacte, importer aussi un PDF ou une image du profil.</p>
-        </div>
-        """
+        preview = profile_source_preview_html(source_path, source_name)
     return f"""
     <div class="card profile-visual-card">
       <h2>Lecture visuelle du document</h2>
@@ -1026,11 +1146,13 @@ def render_profile_visual(source_url: str, source_name: str, analysis: dict) -> 
     """
 
 
-def render_profile_workspace(analysis: dict, source_url: str, source_name: str) -> str:
+def render_profile_workspace(analysis: dict, source_url: str, source_name: str, source_path: Path | None = None) -> str:
+    compatibility = render_compatibility_panel(technical_file_capability(source_path, source_name))
     return f"""
     <div class="grid" style="grid-template-columns:1.25fr .75fr;margin-top:16px">
-      {render_profile_visual(source_url, source_name, analysis)}
+      {render_profile_visual(source_url, source_name, analysis, source_path)}
       <div>
+        {compatibility}
         {render_profile_analysis_result(analysis)}
       </div>
     </div>
@@ -1041,6 +1163,10 @@ def render_profile_workspace(analysis: dict, source_url: str, source_name: str) 
     .profile-overlay-note span{{font-size:12px;color:#dbeafe}}
     .profile-tags{{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}}
     .profile-schematic{{width:100%;background:#fff;border-radius:10px;padding:10px;color:#102033}}
+    .profile-text-preview{{width:100%;max-height:640px;overflow:auto;background:#fff;color:#111827;border-radius:10px;padding:14px;font-size:13px;line-height:1.45;text-align:left;white-space:pre-wrap}}
+    .profile-table-preview{{width:100%;max-height:640px;overflow:auto;background:#fff;color:#111827;border-radius:10px;padding:12px}}
+    .profile-table-preview table{{background:white;color:#111827;min-width:680px}}
+    .profile-table-preview td{{border:1px solid #d7dee8;color:#111827;font-size:12px;padding:7px}}
     @media(max-width:900px){{.grid[style*="1.25fr"]{{grid-template-columns:1fr!important}}.profile-viewer{{min-height:320px}}.profile-viewer iframe{{height:420px!important}}}}
     </style>
     """
@@ -2626,9 +2752,9 @@ class App(BaseHTTPRequestHandler):
             <label>Type de document</label>
             <select name="document_type">{type_options}</select>
             <label>Fichier a analyser</label>
-            <input type="file" name="profile_file" accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.xlsx,.xls,.dwg,.dxf" required>
+            <input type="file" name="profile_file" accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.xlsx,.xls,.dwg,.dxf,.zip" required>
             <button class="green">Analyser le profil</button>
-            <p class="muted">Avec la cle OpenAI active et du credit disponible, l'analyse devient visuelle et plus intelligente. Sinon, une analyse locale de secours reste disponible.</p>
+            <p class="muted">Le systeme detecte automatiquement le format. PDF/images s'affichent directement, Excel/TXT/CSV sont lus, ZIP est liste, et DWG/DXF sont prepares pour conversion CAO future.</p>
           </form>
           <div class="card">
             <h2>Ce que l'analyse doit expliquer</h2>
@@ -2662,7 +2788,7 @@ class App(BaseHTTPRequestHandler):
             if item is None or not getattr(item, "filename", ""):
                 return self.profile_analyzer("<p class='alert'>Choisis d'abord un fichier a analyser.</p>")
             suffix = Path(item.filename).suffix.lower()
-            accepted = (".pdf", ".png", ".jpg", ".jpeg", ".txt", ".csv", ".xlsx", ".xls", ".dwg", ".dxf")
+            accepted = (".pdf", ".png", ".jpg", ".jpeg", ".txt", ".csv", ".xlsx", ".xls", ".dwg", ".dxf", ".zip")
             if suffix not in accepted:
                 return self.profile_analyzer("<p class='alert'>Format non accepte pour le moment. Utilise PDF, image, TXT/CSV, Excel ou DWG/DXF.</p>")
             user_dir = PROFILE_UPLOADS / f"user_{user['id']}"
@@ -2684,7 +2810,7 @@ class App(BaseHTTPRequestHandler):
                     (user["id"], project, document_type, str(saved_path), item.filename, json.dumps(analysis, ensure_ascii=False), "", status, now()),
                 )
                 analysis_id = cur.lastrowid
-                result_html = render_profile_workspace(analysis, f"/profile-source/{analysis_id}", item.filename)
+                result_html = render_profile_workspace(analysis, f"/profile-source/{analysis_id}", item.filename, saved_path)
                 con.execute("UPDATE profile_analyses SET analysis_html=? WHERE id=?", (result_html, analysis_id))
             return self.profile_analyzer("<p class='alert'>Analyse terminee et sauvegardee dans ton historique.</p>", result_html)
         except Exception as exc:
@@ -2703,7 +2829,7 @@ class App(BaseHTTPRequestHandler):
         if not row:
             return self.send_html("Analyse introuvable", "<div class='card'><h2>Analyse introuvable ou non autorisee.</h2></div>", 404)
         analysis = json.loads(row["analysis_json"] or "{}")
-        visual_html = render_profile_workspace(analysis, f"/profile-source/{row['id']}", row["source_name"])
+        visual_html = render_profile_workspace(analysis, f"/profile-source/{row['id']}", row["source_name"], Path(row["source_file"]))
         body = f"""
         <div class="card">
           <h2>Analyse sauvegardee</h2>
