@@ -1346,25 +1346,27 @@ def render_page(title: str, body: str, user: sqlite3.Row | None = None) -> bytes
 <style>
 .preview-wrap{{position:sticky;top:92px}}
 .preview-stage{{background:#dfe7f0;border:1px solid #cbd5e1;border-radius:12px;padding:12px;box-shadow:inset 0 1px 0 #fff}}
-.preview-sheet{{height:430px;background:white;border:2px solid #172033;display:grid;grid-template-columns:1fr 145px;overflow:hidden}}
+.preview-sheet{{height:480px;background:white;border:2px solid #172033;display:grid;grid-template-columns:minmax(0,1fr) 118px;overflow:hidden}}
 .preview-plan{{position:relative;background:#fbfdff;display:flex;align-items:center;justify-content:center;border-right:2px solid #172033;color:#64748b;font-weight:800;text-align:center}}
-.preview-plan iframe{{position:absolute;inset:0;width:100%;height:100%;border:0;background:white}}
+.preview-plan iframe,.preview-plan object{{position:absolute;inset:0;width:100%;height:100%;border:0;background:white}}
 .preview-plan img{{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:white}}
 .preview-plan svg{{width:82%;max-height:82%;opacity:.95}}
-.preview-cartouche{{font-size:9px;background:#fdfefe;display:flex;flex-direction:column;color:#111827}}
-.preview-logo{{height:70px;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900;border-bottom:1px solid #172033;color:#08213A}}
-.preview-logo img{{max-width:88%;max-height:58px;object-fit:contain}}
-.preview-sec{{border-bottom:1px solid #cbd5e1;padding:7px 8px}}
-.preview-sec b{{display:block;font-size:10px;margin-top:3px}}
-.preview-tag{{display:inline-block;background:#08213A;color:white;font-size:7px;font-weight:900;padding:3px 6px;margin-bottom:3px}}
-.preview-table{{margin:8px;border:1px solid #cbd5e1;display:grid;grid-template-columns:1fr 1fr;font-size:7px}}
-.preview-table span{{padding:4px;border-bottom:1px solid #e2e8f0}}
-.preview-list{{margin:0 8px 8px 8px;font-size:7px;display:grid;gap:3px}}
+.preview-empty{{padding:16px;max-width:260px;line-height:1.35;color:#64748b}}
+.preview-file-name{{position:absolute;left:10px;bottom:10px;right:10px;background:rgba(15,23,42,.82);color:white;border-radius:8px;padding:7px 9px;font-size:11px;font-weight:800;text-align:left;z-index:3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.preview-cartouche{{font-size:8px;background:#fdfefe;display:flex;flex-direction:column;color:#111827}}
+.preview-logo{{height:52px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;border-bottom:1px solid #172033;color:#08213A}}
+.preview-logo img{{max-width:90%;max-height:44px;object-fit:contain}}
+.preview-sec{{border-bottom:1px solid #cbd5e1;padding:5px 6px}}
+.preview-sec b{{display:block;font-size:8px;margin-top:2px;line-height:1.15}}
+.preview-tag{{display:inline-block;background:#08213A;color:white;font-size:6px;font-weight:900;padding:2px 5px;margin-bottom:2px}}
+.preview-table{{margin:6px;border:1px solid #cbd5e1;display:grid;grid-template-columns:1fr 1fr;font-size:6px}}
+.preview-table span{{padding:3px;border-bottom:1px solid #e2e8f0}}
+.preview-list{{margin:0 6px 6px 6px;font-size:6px;display:grid;gap:2px}}
 .preview-list div{{display:flex;gap:5px;align-items:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
-.preview-swatch{{width:8px;height:8px;border-radius:2px;display:inline-block;flex:0 0 auto}}
-.preview-footer{{margin-top:auto;background:#08213A;color:white;padding:9px;text-align:center;font-weight:900}}
+.preview-swatch{{width:7px;height:7px;border-radius:2px;display:inline-block;flex:0 0 auto}}
+.preview-footer{{margin-top:auto;background:#08213A;color:white;padding:7px;text-align:center;font-weight:900}}
 .preview-sheet.platform_premium{{border-color:#8A6A20}}.preview-sheet.platform_premium .preview-cartouche{{background:#fbf7ec}}.preview-sheet.platform_premium .preview-logo{{background:#07192E;color:#f8fafc;border-bottom:4px solid #8A6A20}}.preview-sheet.platform_premium .preview-tag,.preview-sheet.platform_premium .preview-footer{{background:#07192E;color:#f7d77b}}
-.preview-sheet.platform_modern{{border-color:#334155}}.preview-sheet.platform_modern .preview-cartouche{{background:#fafbfc;border-left:16px solid #e2e8f0}}.preview-sheet.platform_modern .preview-logo{{height:55px;color:#334155}}.preview-sheet.platform_modern .preview-tag,.preview-sheet.platform_modern .preview-footer{{background:#334155}}
+.preview-sheet.platform_modern{{border-color:#334155}}.preview-sheet.platform_modern .preview-cartouche{{background:#fafbfc;border-left:10px solid #e2e8f0}}.preview-sheet.platform_modern .preview-logo{{height:48px;color:#334155}}.preview-sheet.platform_modern .preview-tag,.preview-sheet.platform_modern .preview-footer{{background:#334155}}
 .preview-sheet.platform_topo{{border-color:#0f766e}}.preview-sheet.platform_topo .preview-cartouche{{background:#f0fdfa;border-left:6px solid #0f766e}}.preview-sheet.platform_topo .preview-logo{{color:#0f766e;border-radius:0 0 18px 18px}}.preview-sheet.platform_topo .preview-tag,.preview-sheet.platform_topo .preview-footer{{background:#0f766e}}
 .preview-sheet.platform_engineering{{border-color:#1d4ed8}}.preview-sheet.platform_engineering .preview-cartouche{{background-image:linear-gradient(#dbeafe 1px,transparent 1px),linear-gradient(90deg,#dbeafe 1px,transparent 1px);background-size:18px 18px}}.preview-sheet.platform_engineering .preview-logo{{color:#1d4ed8}}.preview-sheet.platform_engineering .preview-tag,.preview-sheet.platform_engineering .preview-footer{{background:#1d4ed8}}
 .assistant-float{{position:fixed;right:16px;bottom:14px;z-index:60;display:flex;align-items:center;gap:8px;text-decoration:none;color:#102033;max-width:230px;opacity:.92}}
@@ -1481,9 +1483,7 @@ function bindPreview(){
   if(!form) return;
   form.addEventListener('input', updatePreview);
   form.addEventListener('change', updatePreview);
-  const fileInput = form.querySelector('input[type="file"][name="file"], input[type="file"][name="files"]');
-  if(fileInput){
-    fileInput.addEventListener('change', () => {
+  const showImportedPreview = (fileInput) => {
       const f = fileInput.files && fileInput.files[0];
       if(f){
         const name = f.name.toLowerCase();
@@ -1512,14 +1512,26 @@ function bindPreview(){
           scaleField.value = '1/' + scaleMatch[1];
         }
       }
-      if(f && f.type === 'application/pdf'){
-        previewPlan.innerHTML = '<iframe src="'+URL.createObjectURL(f)+'"></iframe>';
-      }else if(f && f.type && f.type.startsWith('image/')){
-        previewPlan.innerHTML = '<img src="'+URL.createObjectURL(f)+'" alt="Apercu du document importe">';
+      if(!f){
+        updatePreview();
+        return;
+      }
+      const lowerName = f.name.toLowerCase();
+      const isPdf = f.type === 'application/pdf' || lowerName.endsWith('.pdf');
+      const isImage = (f.type && f.type.startsWith('image/')) || /\\.(png|jpe?g|webp|bmp|gif|tiff?)$/.test(lowerName);
+      const safeName = f.name.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+      const url = URL.createObjectURL(f);
+      if(isPdf){
+        previewPlan.innerHTML = '<object data="'+url+'#toolbar=0&navpanes=0&scrollbar=0" type="application/pdf"><iframe src="'+url+'#toolbar=0&navpanes=0"></iframe></object><div class="preview-file-name">PDF charge : '+safeName+'</div>';
+      }else if(isImage){
+        previewPlan.innerHTML = '<img src="'+url+'" alt="Apercu du document importe"><div class="preview-file-name">Image chargee : '+safeName+'</div>';
+      }else{
+        previewPlan.innerHTML = '<div class="preview-empty">Fichier charge : '+safeName+'<br>Ce format sera traite a la generation, mais l apercu direct est reserve aux PDF et images.</div>';
       }
       updatePreview();
-    });
-  }
+  };
+  const fileInputs = form.querySelectorAll('input[type="file"][name="file"], input[type="file"][name="files"]');
+  fileInputs.forEach(fileInput => fileInput.addEventListener('change', () => showImportedPreview(fileInput)));
   const logoInput = form.querySelector('input[type="file"][name="logo"]');
   if(logoInput){
     logoInput.addEventListener('change', () => {
