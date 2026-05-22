@@ -24,6 +24,7 @@ from pathlib import Path
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A0, A1, A2, A3, A4, landscape, portrait
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 from pypdf import PageObject, PdfReader, PdfWriter, Transformation
 from pypdf.generic import ContentStream
@@ -253,7 +254,17 @@ def guess_plan_metadata(source_path: Path | None) -> dict:
             plan_type = value
             break
     scale = ""
-    match = re.search(r"\b1\s*[/:\-\s]\s*(20|25|50|75|100|200|250|500|1000|2000|5000)\b", low)
+    scale_denoms = "20|25|50|75|100|125|150|200|250|500|750|1000|1500|2000|2500|5000|10000"
+    scale_patterns = [
+        rf"\b1\s*[/:\-\s]\s*({scale_denoms})\b",
+        rf"\b(?:ech|echelle|Ã©chelle|scale)\s*[:=\-]?\s*1\s*[/:\-\s]\s*({scale_denoms})\b",
+        rf"\b(?:ech|echelle|Ã©chelle)\s*[:=\-]?\s*({scale_denoms})\b",
+    ]
+    match = None
+    for pattern in scale_patterns:
+        match = re.search(pattern, low)
+        if match:
+            break
     if match:
         scale = f"1/{match.group(1)}"
     return {"plan_type": plan_type, "scale": scale}
@@ -1338,6 +1349,7 @@ def render_page(title: str, body: str, user: sqlite3.Row | None = None) -> bytes
 .preview-sheet{{height:430px;background:white;border:2px solid #172033;display:grid;grid-template-columns:1fr 145px;overflow:hidden}}
 .preview-plan{{position:relative;background:#fbfdff;display:flex;align-items:center;justify-content:center;border-right:2px solid #172033;color:#64748b;font-weight:800;text-align:center}}
 .preview-plan iframe{{position:absolute;inset:0;width:100%;height:100%;border:0;background:white}}
+.preview-plan img{{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:white}}
 .preview-plan svg{{width:82%;max-height:82%;opacity:.95}}
 .preview-cartouche{{font-size:9px;background:#fdfefe;display:flex;flex-direction:column;color:#111827}}
 .preview-logo{{height:70px;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900;border-bottom:1px solid #172033;color:#08213A}}
@@ -1386,6 +1398,15 @@ def preview_panel(title: str = "Apercu du modele") -> str:
           <div class="preview-plan" id="previewPlan">
             <svg viewBox="0 0 440 280">
               <rect x="25" y="25" width="360" height="220" fill="none" stroke="#111827" stroke-width="2"/>
+              <g transform="translate(54 58)" stroke="#111827" fill="#111827">
+                <line x1="0" y1="-25" x2="0" y2="25" stroke-width="2"/>
+                <line x1="-25" y1="0" x2="25" y2="0" stroke-width="2"/>
+                <path d="M0 -31 L-6 -17 L0 -22 L6 -17 Z"/>
+                <text x="-4" y="-36" font-size="12" font-weight="700">N</text>
+                <text x="-4" y="43" font-size="10">S</text>
+                <text x="30" y="4" font-size="10">E</text>
+                <text x="-42" y="4" font-size="10">O</text>
+              </g>
               <path d="M70 220 L70 92 L145 92 L145 60 L310 60 L310 220 Z" fill="none" stroke="#111827" stroke-width="4"/>
               <path d="M98 220 L98 118 L166 118 L166 88 L285 88 L285 220" fill="none" stroke="#2f8cff" stroke-width="3"/>
               <line x1="45" y1="150" x2="370" y2="150" stroke="#94a3b8" stroke-dasharray="8 8"/>
@@ -1449,11 +1470,11 @@ function updatePreview(){
       return `<div><span class="preview-swatch" style="background:${color}"></span>${text}</div>`;
     }).join('');
   }
-  const cols = [document.getElementById('col1')?.value || 'REPERE', document.getElementById('col4')?.value || 'QTE'];
+  const cols = [document.getElementById('col1')?.value || 'DESIGNATION', document.getElementById('col3')?.value || 'QUANTITE'];
   const row = document.querySelector('#elementsRows .legend-line');
   const r1 = row?.children[0]?.value || 'Zone projet';
-  const r4 = row?.children[3]?.value || '1';
-  previewTable.innerHTML = `<span>${cols[0]}</span><span>${cols[1]}</span><span>${r1}</span><span>${r4}</span>`;
+  const r3 = row?.children[2]?.value || '1';
+  previewTable.innerHTML = `<span>${cols[0]}</span><span>${cols[1]}</span><span>${r1}</span><span>${r3}</span>`;
 }
 function bindPreview(){
   const form = document.querySelector('form');
@@ -1486,13 +1507,15 @@ function bindPreview(){
           const found = planGuesses.find(([rx]) => rx.test(name));
           if(found) planField.value = found[1];
         }
-        const scaleMatch = name.match(/1[\\/_:-]?(20|25|50|75|100|200|250|500|1000|2000|5000)/);
+        const scaleMatch = name.match(/(?:ech|echelle|scale)?[\\s_\\-:]*(?:1)?[\\/_:-]?(20|25|50|75|100|125|150|200|250|500|750|1000|1500|2000|2500|5000|10000)\\b/);
         if(scaleField && scaleMatch && (!scaleField.value || scaleField.value === '1/100')){
           scaleField.value = '1/' + scaleMatch[1];
         }
       }
       if(f && f.type === 'application/pdf'){
         previewPlan.innerHTML = '<iframe src="'+URL.createObjectURL(f)+'"></iframe>';
+      }else if(f && f.type && f.type.startsWith('image/')){
+        previewPlan.innerHTML = '<img src="'+URL.createObjectURL(f)+'" alt="Apercu du document importe">';
       }
       updatePreview();
     });
@@ -1624,6 +1647,35 @@ def merge_source_pdf_into_sheet(sheet_pdf: bytes, source_path: Path, output: Pat
         writer.write(f)
 
 
+def draw_compass_rose(c: canvas.Canvas, x: float, y: float, size: float, color=colors.black) -> None:
+    """Draw a compact north/south/east/west marker for topo plans."""
+    c.saveState()
+    c.setStrokeColor(color)
+    c.setFillColor(color)
+    c.setLineWidth(max(0.6, size * 0.035))
+    half = size * 0.36
+    c.line(x, y - half, x, y + half)
+    c.line(x - half, y, x + half, y)
+    c.line(x - half * 0.68, y - half * 0.68, x + half * 0.68, y + half * 0.68)
+    c.line(x - half * 0.68, y + half * 0.68, x + half * 0.68, y - half * 0.68)
+    c.setLineWidth(max(0.8, size * 0.045))
+    c.line(x, y, x, y + size * 0.44)
+    p = c.beginPath()
+    p.moveTo(x, y + size * 0.55)
+    p.lineTo(x - size * 0.08, y + size * 0.34)
+    p.lineTo(x, y + size * 0.40)
+    p.lineTo(x + size * 0.08, y + size * 0.34)
+    p.close()
+    c.drawPath(p, stroke=1, fill=1)
+    c.setFont("Helvetica-Bold", max(6, size * 0.18))
+    c.drawCentredString(x, y + size * 0.62, "N")
+    c.setFont("Helvetica", max(5, size * 0.145))
+    c.drawCentredString(x, y - size * 0.58, "S")
+    c.drawCentredString(x + size * 0.54, y - size * 0.04, "E")
+    c.drawCentredString(x - size * 0.54, y - size * 0.04, "O")
+    c.restoreState()
+
+
 def generate_pdf(output: Path, info: dict, legends: list[dict], page_size: tuple[float, float] = landscape(A4), source_path: Path | None = None):
     output.parent.mkdir(parents=True, exist_ok=True)
     width, height = page_size
@@ -1682,12 +1734,29 @@ def generate_pdf(output: Path, info: dict, legends: list[dict], page_size: tuple
     draw_x, draw_y = x0 + 10 * format_scale, y0 + footer_h + 10 * format_scale
     draw_w, draw_h = w - cart_w - 20 * format_scale, h - footer_h - 20 * format_scale
     has_source_pdf = source_path is not None and source_path.exists() and source_path.suffix.lower() == ".pdf"
-    if not has_source_pdf:
+    has_source_image = source_path is not None and source_path.exists() and source_path.suffix.lower() in (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp")
+    if has_source_image:
+        try:
+            with Image.open(source_path) as img:
+                iw, ih = img.size
+            img_scale = min(draw_w / iw, draw_h / ih)
+            img_w, img_h = iw * img_scale, ih * img_scale
+            img_x = draw_x + (draw_w - img_w) / 2
+            img_y = draw_y + (draw_h - img_h) / 2
+            c.setFillColor(colors.white)
+            c.rect(draw_x, draw_y, draw_w, draw_h, fill=1, stroke=0)
+            c.drawImage(ImageReader(str(source_path)), img_x, img_y, width=img_w, height=img_h, preserveAspectRatio=True, mask="auto")
+        except Exception:
+            c.setFillColor(colors.white)
+            c.rect(draw_x, draw_y, draw_w, draw_h, fill=1, stroke=0)
+    elif not has_source_pdf:
         c.setFillColor(colors.white)
         c.rect(draw_x, draw_y, draw_w, draw_h, fill=1, stroke=0)
     c.setStrokeColor(colors.HexColor("#D5DDE8"))
     c.setLineWidth(0.8)
     c.rect(draw_x, draw_y, draw_w, draw_h)
+    compass_size = max(34, min(62 * min(format_scale, 2.0), draw_w * 0.12, draw_h * 0.18))
+    draw_compass_rose(c, draw_x + compass_size * 0.88, draw_y + draw_h - compass_size * 0.92, compass_size, colors.HexColor("#111827"))
 
     def prepare_logo_clean(path: Path) -> Path | None:
         try:
@@ -2401,7 +2470,7 @@ class App(BaseHTTPRequestHandler):
           <table><tr><th>Modele</th><th>Type</th><th>Analyse</th><th>Acces</th><th>Actions</th></tr>{template_rows}</table>
           <p><a class="btn purple" href="/templates">Importer ou gerer mes modeles</a></p>
         </div>
-        <div class="card" style="margin-top:16px"><h3>Historique PDF generes</h3><table><tr><th>Date</th><th>N plan</th><th>Projet</th><th>Format</th><th>PDF</th></tr>{rows}</table></div>
+        <div class="card" style="margin-top:16px"><h3>Bibliotheque des cartouches realisees</h3><p class="muted">Tous les PDF/cartouches generes restent accessibles ici pour les retrouver, les telecharger ou les renvoyer plus tard.</p><table><tr><th>Date</th><th>N plan</th><th>Projet</th><th>Format</th><th>PDF</th></tr>{rows}</table></div>
         <div class="card" style="margin-top:16px"><h3>Traitements IA Batch / ZIP</h3><table><tr><th>Date</th><th>Projet</th><th>PDF</th><th>Statut</th><th>Fichier</th></tr>{batch_rows}</table></div>"""
         self.send_html("Tableau de bord", body)
 
@@ -3035,10 +3104,10 @@ class App(BaseHTTPRequestHandler):
             <button type="button" class="dark" onclick="addLegend()">+ Ajouter une legende</button>
             <h3>Tableau des elements dynamique</h3>
             <div class="grid">
-              <div><label>Colonne 1</label><input id="col1" value="REPERE"></div>
-              <div><label>Colonne 2</label><input id="col2" value="DESIGNATION"></div>
-              <div><label>Colonne 3</label><input id="col3" value="DIM."></div>
-              <div><label>Colonne 4</label><input id="col4" value="QTE"></div>
+              <div><label>Colonne 1</label><input id="col1" value="DESIGNATION"></div>
+              <div><label>Colonne 2</label><input id="col2" value="UNITE"></div>
+              <div><label>Colonne 3</label><input id="col3" value="QUANTITE"></div>
+              <div><label>Colonne 4</label><input id="col4" value="OBSERVATION"></div>
             </div>
             <div id="elementsRows"></div>
             <button type="button" class="dark" onclick="addElementRow()">+ Ajouter une ligne</button>
@@ -3051,12 +3120,13 @@ class App(BaseHTTPRequestHandler):
           {preview_panel("Apercu avant generation")}
         </form>
         <script>
-        function addLegend(t='',c='#2487ff',s='Ligne'){{let d=document.createElement('div');d.className='legend-line';d.innerHTML=`<select><option>Ligne</option><option>Rectangle</option><option>Cercle</option><option>Croix</option><option>Hachure</option></select><input type="color" value="${{c}}"><input placeholder="Description" value="${{t}}">`;d.children[0].value=s;document.getElementById('legends').appendChild(d);}}
-        function addElementRow(a='',b='',c='',d=''){{let r=document.createElement('div');r.className='legend-line';r.innerHTML=`<input placeholder="Col.1" value="${{a}}"><input placeholder="Col.2" value="${{b}}"><input placeholder="Col.3" value="${{c}}"><input placeholder="Col.4" value="${{d}}"><button type="button" class="red" onclick="this.parentElement.remove()">X</button>`;r.style.gridTemplateColumns='1fr 1fr 1fr 1fr 44px';document.getElementById('elementsRows').appendChild(r);}}
+        function moveLine(btn,dir){{let r=btn.parentElement,p=r.parentElement;if(dir<0&&r.previousElementSibling)p.insertBefore(r,r.previousElementSibling);if(dir>0&&r.nextElementSibling)p.insertBefore(r.nextElementSibling,r);}}
+        function addLegend(t='',c='#2487ff',s='Ligne'){{let d=document.createElement('div');d.className='legend-line';d.innerHTML=`<select><option>Ligne</option><option>Rectangle</option><option>Cercle</option><option>Croix</option><option>Hachure</option><option>Texte</option></select><input type="color" value="${{c}}"><input placeholder="Intitule de la legende" value="${{t}}"><button type="button" class="dark" onclick="moveLine(this,-1)">↑</button><button type="button" class="dark" onclick="moveLine(this,1)">↓</button><button type="button" class="red" onclick="this.parentElement.remove()">X</button>`;d.children[0].value=s;d.style.gridTemplateColumns='110px 80px 1fr 44px 44px 44px';document.getElementById('legends').appendChild(d);}}
+        function addElementRow(a='',b='',c='',d=''){{let r=document.createElement('div');r.className='legend-line';r.innerHTML=`<input placeholder="Designation : Surface de remblai" value="${{a}}"><input placeholder="Unite : m2, m3, ml" value="${{b}}"><input placeholder="Quantite" value="${{c}}"><input placeholder="Observation" value="${{d}}"><button type="button" class="red" onclick="this.parentElement.remove()">X</button>`;r.style.gridTemplateColumns='1.4fr .7fr .8fr 1.2fr 44px';document.getElementById('elementsRows').appendChild(r);}}
         function addRevisionRow(i='',d='',desc=''){{let r=document.createElement('div');r.className='legend-line revision-line';r.innerHTML=`<input placeholder="Indice" list="revision_index_options" value="${{i || revIndex.value || 'REV 00'}}"><input placeholder="Date" value="${{d || revDate.value}}"><input placeholder="Description" list="revision_description_options" value="${{desc || revDescription.value}}"><button type="button" class="red" onclick="this.parentElement.remove()">X</button>`;r.style.gridTemplateColumns='0.8fr 1fr 2fr 44px';document.getElementById('revisionRows').appendChild(r);}}
         function saveLegends(){{let arr=[...document.querySelectorAll('#legends .legend-line')].map(x=>({{symbol:x.children[0].value,color:x.children[1].value,text:x.children[2].value}}));document.getElementById('legends_json').value=JSON.stringify(arr);let cols=[col1.value,col2.value,col3.value,col4.value];document.getElementById('element_columns_json').value=JSON.stringify(cols);let rows=[...document.querySelectorAll('#elementsRows .legend-line')].map(x=>({{c1:x.children[0].value,c2:x.children[1].value,c3:x.children[2].value,c4:x.children[3].value}}));document.getElementById('element_rows_json').value=JSON.stringify(rows);let revs=[...document.querySelectorAll('#revisionRows .revision-line')].map(x=>({{indice:x.children[0].value,date:x.children[1].value,description:x.children[2].value}}));if(!revs.length){{revs=[{{indice:revIndex.value || 'REV 00',date:revDate.value,description:revDescription.value || 'Premiere emission'}}];}}document.getElementById('revision_rows_json').value=JSON.stringify(revs);}}
-        addLegend('Canal principal','#2487ff','Ligne');addLegend('Zone de travaux','#0f766e','Rectangle');addLegend('Point de reference','#dc2626','Croix');
-        addElementRow('P1-P6','Poteau','30x30','06');addElementRow('L1','Longrine','30x40','08');addElementRow('L2','Longrine','25x30','04');
+        addLegend('Canal du Staff','#2487ff','Ligne');addLegend('Purge','#0f766e','Rectangle');addLegend('Point de reference','#dc2626','Croix');
+        addElementRow('Surface de remblai','m2','','');addElementRow('Volume de purge','m3','','');addElementRow('Beton','m3','','');
         addRevisionRow('REV 00','{today_fr}','Premiere emission');
         </script>
         {PREVIEW_SCRIPT}"""
