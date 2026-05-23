@@ -1,4 +1,1 @@
-reportlab
-pypdf
-pillow
-openpyxl
+
