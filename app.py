@@ -1527,7 +1527,7 @@ function bindPreview(){
       }else if(isImage){
         previewPlan.innerHTML = '<img src="'+url+'" alt="Apercu du document importe"><div class="preview-file-name">Image chargee : '+safeName+'</div>';
       }else{
-        previewPlan.innerHTML = '<div class="preview-empty">Fichier charge : '+safeName+'<br>Ce format sera traite a la generation, mais l apercu direct est reserve aux PDF et images.</div>';
+        previewPlan.innerHTML = '<div class="preview-empty">Fichier charge : '+safeName+'<br>Le navigateur ne peut pas afficher ce format directement. Pour voir le vrai plan dans l apercu et dans le PDF final, utilise un PDF ou une image. Pour DWG/DXF, exporte d abord le plan en PDF depuis AutoCAD.</div>';
       }
       updatePreview();
   };
@@ -1738,7 +1738,10 @@ def generate_pdf(output: Path, info: dict, legends: list[dict], page_size: tuple
     bottom_limit = margin + footer_h + 6
     x0, y0 = margin, margin
     w, h = width - 2 * margin, height - 2 * margin
-    cart_w = min(cart_w, w * 0.27)
+    # Keep the cartouche wide enough for its internal professional grid.
+    # A previous reduction made the right-side fields exceed the cartouche box
+    # on A4 portrait, which visually cut the plan number and lower blocks.
+    cart_w = min(cart_w, max(w * 0.27, 220 * format_scale))
 
     c.setStrokeColor(navy)
     c.setLineWidth(1.8 * min(format_scale, 2.2))
@@ -1828,7 +1831,7 @@ def generate_pdf(output: Path, info: dict, legends: list[dict], page_size: tuple
         except Exception:
             return False
 
-    if not has_source_pdf:
+    if not has_source_pdf and not has_source_image:
         # Technical drawing area: clean demo preview only when no real PDF is imported.
         c.setStrokeColor(colors.HexColor("#D8DEE8"))
         c.setLineWidth(0.7)
@@ -3071,7 +3074,8 @@ class App(BaseHTTPRequestHandler):
           {datalist_html()}
           <div class="card">
             <h2>Generateur de cartouche</h2>
-            <label>Fichiers PDF/DWG/Image</label><input type="file" name="file" multiple accept=".pdf,.dwg,.png,.jpg,.jpeg">
+            <label>Fichiers PDF/Image pour cartouche finale</label><input type="file" name="file" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.dwg,.dxf">
+            <p class="muted">Important : l'aperçu et la cartouche finale utilisent directement les PDF/images. Pour un DWG/DXF, exporte d'abord le plan en PDF depuis AutoCAD afin de conserver le vrai dessin.</p>
             <label>Logo societe</label><input type="file" name="logo" accept=".png,.jpg,.jpeg">
             <div class="grid">
               <div><label>Projet</label><input name="project" value="{html.escape(values.get('project','Jardin Botanique'))}"></div>
@@ -3189,6 +3193,24 @@ class App(BaseHTTPRequestHandler):
                 uploaded_sources.append((source_name, source_path))
         if not uploaded_sources:
             uploaded_sources.append(("", None))
+        supported_exts = {".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+        unsupported_sources = [source_path.name for _, source_path in uploaded_sources if source_path is not None and source_path.suffix.lower() not in supported_exts]
+        if unsupported_sources:
+            items = "".join(f"<li>{html.escape(name)}</li>" for name in unsupported_sources)
+            return self.send_html(
+                "Format non compatible",
+                f"""
+                <div class='card'>
+                  <h2>Le fichier charge ne peut pas etre affiche directement</h2>
+                  <p>Le generateur de cartouches applique la cartouche sur le vrai document uniquement pour les formats PDF et images.</p>
+                  <p>Les fichiers suivants ne peuvent pas encore etre rendus dans le navigateur ou dans le PDF final :</p>
+                  <ul>{items}</ul>
+                  <p class='alert'>Pour un DWG/DXF : ouvre le dessin dans AutoCAD/Covadis, exporte-le en PDF, puis recharge ce PDF dans BTP Smart Tools.</p>
+                  <a class='btn' href='/generator'>Retour au generateur</a>
+                </div>
+                """,
+                user,
+            )
         required_credits = len(uploaded_sources)
         if user["role"] != "admin" and user["subscription"] == "none" and user["credits"] < required_credits:
             return self.send_html("Credit requis", f"<div class='card'><h2>Credit requis</h2><p>Cette generation demande {required_credits} credit(s). Ajoute un paiement ou connecte-toi en administrateur pour tester gratuitement.</p><a class='btn' href='/dashboard'>Retour</a></div>")
