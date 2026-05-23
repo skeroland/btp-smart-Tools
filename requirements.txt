@@ -1,4 +1,4 @@
-Pillow
-pypdf
 reportlab
+pypdf
+pillow
 openpyxl
