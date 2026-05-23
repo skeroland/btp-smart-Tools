@@ -1348,11 +1348,12 @@ def render_page(title: str, body: str, user: sqlite3.Row | None = None) -> bytes
 .preview-stage{{background:#dfe7f0;border:1px solid #cbd5e1;border-radius:12px;padding:12px;box-shadow:inset 0 1px 0 #fff}}
 .preview-sheet{{height:480px;background:white;border:2px solid #172033;display:grid;grid-template-columns:minmax(0,1fr) 118px;overflow:hidden}}
 .preview-plan{{position:relative;background:#fbfdff;display:flex;align-items:center;justify-content:center;border-right:2px solid #172033;color:#64748b;font-weight:800;text-align:center}}
-.preview-plan iframe,.preview-plan object{{position:absolute;inset:0;width:100%;height:100%;border:0;background:white}}
+.preview-plan iframe{{position:absolute;inset:0;width:100%;height:100%;border:0;background:white}}
 .preview-plan img{{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:white}}
 .preview-plan svg{{width:82%;max-height:82%;opacity:.95}}
 .preview-empty{{padding:16px;max-width:260px;line-height:1.35;color:#64748b}}
 .preview-file-name{{position:absolute;left:10px;bottom:10px;right:10px;background:rgba(15,23,42,.82);color:white;border-radius:8px;padding:7px 9px;font-size:11px;font-weight:800;text-align:left;z-index:3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.preview-file-name a{{color:white;text-decoration:underline}}
 .preview-cartouche{{font-size:8px;background:#fdfefe;display:flex;flex-direction:column;color:#111827}}
 .preview-logo{{height:52px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;border-bottom:1px solid #172033;color:#08213A}}
 .preview-logo img{{max-width:90%;max-height:44px;object-fit:contain}}
@@ -1522,7 +1523,7 @@ function bindPreview(){
       const safeName = f.name.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
       const url = URL.createObjectURL(f);
       if(isPdf){
-        previewPlan.innerHTML = '<object data="'+url+'#toolbar=0&navpanes=0&scrollbar=0" type="application/pdf"><iframe src="'+url+'#toolbar=0&navpanes=0"></iframe></object><div class="preview-file-name">PDF charge : '+safeName+'</div>';
+        previewPlan.innerHTML = '<iframe src="'+url+'#toolbar=0&navpanes=0" title="Apercu du PDF importe"></iframe><div class="preview-file-name">PDF charge : '+safeName+' - <a href="'+url+'" target="_blank">ouvrir</a></div>';
       }else if(isImage){
         previewPlan.innerHTML = '<img src="'+url+'" alt="Apercu du document importe"><div class="preview-file-name">Image chargee : '+safeName+'</div>';
       }else{
@@ -1637,8 +1638,12 @@ def estimate_pdf_content_bbox(page) -> tuple[float, float, float, float] | None:
 def merge_source_pdf_into_sheet(sheet_pdf: bytes, source_path: Path, output: Path, draw_box: tuple[float, float, float, float], page_size: tuple[float, float]):
     sheet_page = PdfReader(io.BytesIO(sheet_pdf)).pages[0]
     source_page = PdfReader(str(source_path)).pages[0]
+    try:
+        source_page.transfer_rotation_to_content()
+    except Exception:
+        pass
     draw_x, draw_y, draw_w, draw_h = draw_box
-    media = source_page.mediabox
+    media = source_page.cropbox if source_page.cropbox else source_page.mediabox
     src_x0, src_y0 = float(media.left), float(media.bottom)
     src_x1, src_y1 = float(media.right), float(media.top)
     content_bbox = estimate_pdf_content_bbox(source_page)
@@ -1733,6 +1738,7 @@ def generate_pdf(output: Path, info: dict, legends: list[dict], page_size: tuple
     bottom_limit = margin + footer_h + 6
     x0, y0 = margin, margin
     w, h = width - 2 * margin, height - 2 * margin
+    cart_w = min(cart_w, w * 0.27)
 
     c.setStrokeColor(navy)
     c.setLineWidth(1.8 * min(format_scale, 2.2))
@@ -2229,7 +2235,10 @@ def generate_pdf(output: Path, info: dict, legends: list[dict], page_size: tuple
     c.save()
     sheet_pdf = buffer.getvalue()
     if has_source_pdf:
-        merge_source_pdf_into_sheet(sheet_pdf, source_path, output, (draw_x + uw(6), draw_y + uw(28), draw_w - uw(12), draw_h - uw(38)), page_size)
+        try:
+            merge_source_pdf_into_sheet(sheet_pdf, source_path, output, (draw_x + uw(6), draw_y + uw(28), draw_w - uw(12), draw_h - uw(38)), page_size)
+        except Exception:
+            output.write_bytes(sheet_pdf)
     else:
         output.write_bytes(sheet_pdf)
 
