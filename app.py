@@ -1366,6 +1366,7 @@ def render_page(title: str, body: str, user: sqlite3.Row | None = None) -> bytes
     nav = [
         ("Accueil", "/"),
         ("Connexion", "/login") if not logged else ("Tableau de bord", "/dashboard"),
+        ("Creer un compte", "/register") if not logged else ("Abonnement", "/payment"),
         ("Generateur", "/generator"),
         ("Modeles", "/templates"),
         ("IA Batch", "/batch"),
@@ -2331,6 +2332,8 @@ class App(BaseHTTPRequestHandler):
             return self.home()
         if path == "/login":
             return self.login_page()
+        if path == "/register":
+            return self.register_page()
         if path == "/logout":
             return self.logout()
         if path == "/dashboard":
@@ -2385,6 +2388,8 @@ class App(BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         if path == "/login":
             return self.login_action()
+        if path == "/register":
+            return self.register_action()
         if path == "/generate":
             return self.generate_action()
         if path == "/assistant":
@@ -2433,10 +2438,10 @@ class App(BaseHTTPRequestHandler):
             <h1>BTP Smart Tools</h1>
             <h2>Cartouches automatiques aujourd'hui. Outils BTP intelligents demain.</h2>
             <p>La premiere version est concentree sur la generation de cartouches professionnelles : PDF, cadres, logos, legendes, tableaux, formats et mise en page propre. Les modules topo, AutoCAD et analyse technique arrivent progressivement.</p>
-            <div class="row"><a class="btn green" href="/generator">Generer un cartouche</a><a class="btn" href="/login">Acceder au compte</a><a class="btn dark" href="/services">Voir les services</a></div>
+            <div class="row"><a class="btn green" href="/register">Creer un compte</a><a class="btn" href="/login">Acceder au compte</a><a class="btn dark" href="/services">Voir les services</a></div>
             <div class="feature-row">
               <div class="feature"><b>Actif maintenant</b><span>Generation de cartouches et PDF propres.</span></div>
-              <div class="feature"><b>Vision plateforme</b><span>Topo, AutoCAD et outils BTP en developpement.</span></div>
+              <div class="feature"><b>Compte client</b><span>Credits, abonnements et historique des PDF generes.</span></div>
               <div class="feature"><b>Support integre</b><span>Assistant visible pour guider les utilisateurs.</span></div>
             </div>
           </div>
@@ -2478,12 +2483,60 @@ class App(BaseHTTPRequestHandler):
             <label>Email</label><input name="email" value="{ADMIN_EMAIL}">
             <label>Mot de passe</label><input name="password" type="password" value="{ADMIN_PASSWORD}">
             <button class="green">Se connecter</button>
+            <p><a class="btn dark" href="/register">Creer un compte client</a></p>
             <p class="muted">Admin test : {ADMIN_EMAIL} / {ADMIN_PASSWORD}</p>
             <p class="muted">Client test : {USER_EMAIL} / {USER_PASSWORD}</p>
           </form>
           <div class="card"><h2>Objectif</h2><p>Connecte-toi comme administrateur pour tester gratuitement toutes les fonctions, voir les utilisateurs, paiements et generations.</p></div>
         </div>"""
         self.send_html("Connexion", body)
+
+    def register_page(self, error: str = ""):
+        alert = f"<p class='alert'>{html.escape(error)}</p>" if error else ""
+        body = f"""
+        <div class="grid">
+          <form class="card" method="post" action="/register">
+            <h2>Creer un compte</h2>{alert}
+            <p class="muted">Le compte permet d'acheter des credits, importer des cartouches personnalisees et retrouver les PDF generes.</p>
+            <label>Nom / Entreprise</label><input name="name" placeholder="Entreprise ou nom complet" required>
+            <label>Email</label><input name="email" type="email" placeholder="client@email.com" required>
+            <label>Mot de passe</label><input name="password" type="password" minlength="6" required>
+            <button class="green">Creer mon compte</button>
+            <p class="muted">Apres creation, choisis un pack ou un abonnement pour recevoir tes credits.</p>
+          </form>
+          <div class="card">
+            <h2>Parcours client</h2>
+            <p>1. Creation du compte.</p>
+            <p>2. Achat d'un pack ou abonnement.</p>
+            <p>3. Import du PDF ou de la cartouche modele.</p>
+            <p>4. Detection automatique si le PDF contient l'echelle.</p>
+            <p>5. Generation du PDF final avec cartouche.</p>
+          </div>
+        </div>"""
+        self.send_html("Creer un compte", body)
+
+    def register_action(self):
+        form = self.read_form()
+        name = (form.get("name") or "").strip()
+        email = (form.get("email") or "").strip().lower()
+        password = form.get("password") or ""
+        if not name or not email or len(password) < 6:
+            return self.register_page("Complete le nom, l'email et un mot de passe de 6 caracteres minimum.")
+        with db() as con:
+            exists = con.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
+            if exists:
+                return self.register_page("Ce compte existe deja. Connecte-toi ou utilise un autre email.")
+            cur = con.execute(
+                "INSERT INTO users(email,password_hash,name,role,credits,subscription,subscription_until,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                (email, hash_password(password), name, "user", 0, "none", "", now()),
+            )
+            user_id = cur.lastrowid
+        token = secrets.token_urlsafe(32)
+        SESSIONS[token] = user_id
+        self.send_response(302)
+        self.send_header("Location", "/payment")
+        self.send_header("Set-Cookie", f"ske_session={token}; Path=/; HttpOnly; SameSite=Lax")
+        self.end_headers()
 
     def login_action(self):
         form = self.read_form()
@@ -3149,7 +3202,7 @@ class App(BaseHTTPRequestHandler):
             </div>
             <div class="grid">
               <div><label>Type de plan</label><input list="plan_type_options" name="plan_type" value="{html.escape(values.get('plan_type','Plan beton'))}" placeholder="Choisir ou ecrire"></div>
-              <div><label>Echelle</label><input list="scale_options" name="scale" value="{html.escape(values.get('scale','1/100'))}" placeholder="Choisir ou ecrire"></div>
+              <div><label>Echelle</label><input list="scale_options" name="scale" value="{html.escape(values.get('scale','1/100'))}" placeholder="Detectee automatiquement si presente dans le PDF"></div>
             </div>
             <div class="grid">
               <div><label>Auteur</label><input name="author" value="{html.escape(values.get('author','Michael'))}"></div>
@@ -3170,7 +3223,7 @@ class App(BaseHTTPRequestHandler):
               <div><label>Theme couleur</label><select name="theme"><option>Bleu BTP</option><option>Noir Pro</option><option>Rouge Entreprise</option><option>Vert Chantier</option><option>Gris Technique</option></select></div>
               <div><label>Couleur personnalisee</label><input name="theme_color" type="color" value="#08213A"></div>
             </div>
-            <p class="alert">Numero du plan automatique : le systeme genere BTP-001, BTP-002, BTP-003... a chaque nouveau PDF.</p>
+            <p class="alert">Numero du plan automatique : le systeme genere BTP-001, BTP-002, BTP-003... a chaque nouveau PDF. Si le PDF contient une echelle lisible, elle est detectee automatiquement.</p>
             <h3>Zones a afficher</h3>
             <div class="grid">
               <label><input type="checkbox" name="show_legend" checked style="width:auto"> Afficher la legende</label>
