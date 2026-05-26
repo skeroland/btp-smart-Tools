@@ -81,10 +81,8 @@ CREDIT_COST_PDF = 1
 CREDIT_COST_TEMPLATE_ANALYSIS = 5
 CREDIT_COST_TEMPLATE_RESCAN = 3
 
-ADMIN_EMAIL = "sessouedem15@gmail.com"
-ADMIN_PASSWORD = "SKE-admin-2026"
-USER_EMAIL = "client@ske.ga"
-USER_PASSWORD = "client2026"
+ADMIN_EMAIL = os.environ.get("BTP_ADMIN_EMAIL", "sessouedem15@gmail.com").strip()
+ADMIN_PASSWORD = os.environ.get("BTP_ADMIN_PASSWORD", "").strip()
 
 SESSIONS: dict[str, int] = {}
 PAGE_FORMATS = {
@@ -481,15 +479,17 @@ def init_db():
                 con.execute(alter)
             except sqlite3.OperationalError:
                 pass
-        for email, password, name, role, credits, subscription in [
-            (ADMIN_EMAIL, ADMIN_PASSWORD, "Administrateur SKE", "admin", 9999, "admin_free"),
-            (USER_EMAIL, USER_PASSWORD, "Client demo", "user", 30, "monthly"),
-        ]:
-            exists = con.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
+        if ADMIN_EMAIL and ADMIN_PASSWORD:
+            exists = con.execute("SELECT id FROM users WHERE email=?", (ADMIN_EMAIL,)).fetchone()
             if not exists:
                 con.execute(
                     "INSERT INTO users(email,password_hash,name,role,credits,subscription,subscription_until,created_at) VALUES(?,?,?,?,?,?,?,?)",
-                    (email, hash_password(password), name, role, credits, subscription, (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d"), now()),
+                    (ADMIN_EMAIL, hash_password(ADMIN_PASSWORD), "Administrateur BTP Smart Tools", "admin", 9999, "admin_free", (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d"), now()),
+                )
+            else:
+                con.execute(
+                    "UPDATE users SET password_hash=?, role='admin', credits=9999, subscription='admin_free' WHERE email=?",
+                    (hash_password(ADMIN_PASSWORD), ADMIN_EMAIL),
                 )
         modules = [
             ("Cartouches automatiques", "Plans", "actif", "Generation PDF avec cartouches, cadres, legendes et informations projet."),
@@ -2480,14 +2480,12 @@ class App(BaseHTTPRequestHandler):
         <div class="grid">
           <form class="card" method="post" action="/login">
             <h2>Connexion</h2>{alert}
-            <label>Email</label><input name="email" value="{ADMIN_EMAIL}">
-            <label>Mot de passe</label><input name="password" type="password" value="{ADMIN_PASSWORD}">
+            <label>Email</label><input name="email" type="email" placeholder="votre@email.com" autocomplete="email">
+            <label>Mot de passe</label><input name="password" type="password" placeholder="Votre mot de passe" autocomplete="current-password">
             <button class="green">Se connecter</button>
             <p><a class="btn dark" href="/register">Creer un compte client</a></p>
-            <p class="muted">Admin test : {ADMIN_EMAIL} / {ADMIN_PASSWORD}</p>
-            <p class="muted">Client test : {USER_EMAIL} / {USER_PASSWORD}</p>
           </form>
-          <div class="card"><h2>Objectif</h2><p>Connecte-toi comme administrateur pour tester gratuitement toutes les fonctions, voir les utilisateurs, paiements et generations.</p></div>
+          <div class="card"><h2>Acces compte</h2><p>Connecte-toi avec ton compte client pour acheter des credits, importer des cartouches et retrouver tes PDF generes.</p><p class="muted">L'acces administrateur est reserve au fondateur et n'est pas affiche publiquement.</p></div>
         </div>"""
         self.send_html("Connexion", body)
 
