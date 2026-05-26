@@ -70,10 +70,16 @@ PVIT_ACCEPTED_RECEIVER_TOKENS = {
 }
 
 PAYMENT_OFFERS = {
-    "pdf": {"label": "1 PDF", "amount": 1200, "display": "1 200 FCFA", "description": "Generation ponctuelle d'un PDF avec cartouche."},
-    "monthly": {"label": "Abonnement mensuel", "amount": 12000, "display": "12 000 FCFA", "description": "Acces mensuel pour utilisateurs reguliers."},
-    "annual": {"label": "Abonnement annuel", "amount": 108000, "display": "108 000 FCFA", "description": "Offre entreprise annuelle."},
+    "pdf": {"label": "Pack ponctuel", "amount": 1200, "display": "1 200 FCFA", "credits": 1, "subscription": "none", "days": 0, "description": "1 credit pour generer 1 PDF avec cartouche."},
+    "discovery": {"label": "Pack decouverte", "amount": 5000, "display": "5 000 FCFA", "credits": 10, "subscription": "none", "days": 0, "description": "10 credits : 1 analyse de cartouche + 5 generations PDF."},
+    "standard": {"label": "Pack standard", "amount": 10000, "display": "10 000 FCFA", "credits": 20, "subscription": "none", "days": 0, "description": "20 credits : 2 analyses de cartouches + 10 generations PDF."},
+    "monthly": {"label": "Abonnement mensuel", "amount": 12000, "display": "12 000 FCFA", "credits": 30, "subscription": "monthly", "days": 31, "description": "30 credits/mois : cartouches, analyses IA et generations PDF."},
+    "annual": {"label": "Abonnement annuel", "amount": 108000, "display": "108 000 FCFA", "credits": 450, "subscription": "annual", "days": 365, "description": "450 credits/an pour bureaux et entreprises BTP."},
 }
+
+CREDIT_COST_PDF = 1
+CREDIT_COST_TEMPLATE_ANALYSIS = 5
+CREDIT_COST_TEMPLATE_RESCAN = 3
 
 ADMIN_EMAIL = "sessouedem15@gmail.com"
 ADMIN_PASSWORD = "SKE-admin-2026"
@@ -467,6 +473,9 @@ def init_db():
             "ALTER TABLE payments ADD COLUMN transaction_ref TEXT",
             "ALTER TABLE payments ADD COLUMN payment_url TEXT",
             "ALTER TABLE payments ADD COLUMN provider_response TEXT",
+            "ALTER TABLE payments ADD COLUMN offer_key TEXT",
+            "ALTER TABLE payments ADD COLUMN credits INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE payments ADD COLUMN credited INTEGER NOT NULL DEFAULT 0",
         ]:
             try:
                 con.execute(alter)
@@ -474,7 +483,7 @@ def init_db():
                 pass
         for email, password, name, role, credits, subscription in [
             (ADMIN_EMAIL, ADMIN_PASSWORD, "Administrateur SKE", "admin", 9999, "admin_free"),
-            (USER_EMAIL, USER_PASSWORD, "Client demo", "user", 3, "monthly"),
+            (USER_EMAIL, USER_PASSWORD, "Client demo", "user", 30, "monthly"),
         ]:
             exists = con.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
             if not exists:
@@ -485,8 +494,8 @@ def init_db():
         modules = [
             ("Cartouches automatiques", "Plans", "actif", "Generation PDF avec cartouches, cadres, legendes et informations projet."),
             ("Cartouches personnalisees", "Plans", "actif", "Import de modeles entreprise, preparation d'analyse locale et structure prete pour IA vision."),
-        ("Assistant support", "Aide", "actif", "Accueil, guide d'utilisation, questions frequentes et support de premier niveau."),
-            ("Analyse profils routiers", "IA BTP", "actif", "Analyse de profils en long, profils en travers, plans routiers et explications techniques."),
+            ("Assistant support", "Aide", "actif", "Accueil, guide d'utilisation, questions frequentes et support de premier niveau."),
+            ("Analyse profils routiers", "IA BTP", "a_venir", "Analyse de profils en long, profils en travers, plans routiers et explications techniques."),
             ("Analyse plans techniques", "IA BTP", "a_venir", "Lecture intelligente des plans, explications et annotations techniques."),
             ("Controle topo chantier", "Topographie", "a_venir", "Fiches voiles, radiers, ecarts et rapports PDF."),
             ("Dimensionnement BTP", "Bureau etudes", "a_venir", "Outils futurs pour routes, batiments et murs de soutenement."),
@@ -497,6 +506,11 @@ def init_db():
                 con.execute(
                     "INSERT INTO service_modules(name,category,status,description,created_at) VALUES(?,?,?,?,?)",
                     (name, category, status, description, now()),
+                )
+            else:
+                con.execute(
+                    "UPDATE service_modules SET category=?, status=?, description=? WHERE name=?",
+                    (category, status, description, name),
                 )
         exists = con.execute("SELECT value FROM settings WHERE key='next_plan_number'").fetchone()
         if not exists:
@@ -1313,18 +1327,49 @@ def create_pvit_payment(user: sqlite3.Row, offer_key: str, phone: str, payment_i
         return {"status": "pvit_error", "reference": reference, "payment_url": "", "message": str(exc), "raw": {"error": str(exc)}}
 
 
+def grant_payment_credits(con: sqlite3.Connection, payment_id: int) -> bool:
+    payment = con.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone()
+    if not payment or payment["credited"]:
+        return False
+    offer_key = payment["offer_key"] if "offer_key" in payment.keys() and payment["offer_key"] else ""
+    offer = PAYMENT_OFFERS.get(offer_key)
+    credits = int(payment["credits"] or 0)
+    if not offer and not credits:
+        for key, candidate in PAYMENT_OFFERS.items():
+            if candidate["label"] == payment["offer"]:
+                offer_key = key
+                offer = candidate
+                credits = int(candidate.get("credits", 0))
+                break
+    if not offer:
+        offer = PAYMENT_OFFERS["pdf"]
+    if not credits:
+        credits = int(offer.get("credits", 0))
+    subscription = offer.get("subscription", "none")
+    days = int(offer.get("days", 0) or 0)
+    until = ""
+    if days:
+        until = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+        con.execute(
+            "UPDATE users SET credits=credits+?, subscription=?, subscription_until=? WHERE id=?",
+            (credits, subscription, until, payment["user_id"]),
+        )
+    else:
+        con.execute("UPDATE users SET credits=credits+? WHERE id=?", (credits, payment["user_id"]))
+    con.execute("UPDATE payments SET credited=1, credits=?, offer_key=? WHERE id=?", (credits, offer_key, payment_id))
+    return True
+
+
 def render_page(title: str, body: str, user: sqlite3.Row | None = None) -> bytes:
     logged = user is not None
     is_admin = logged and user["role"] == "admin"
     nav = [
         ("Accueil", "/"),
         ("Connexion", "/login") if not logged else ("Tableau de bord", "/dashboard"),
-        ("Espace entreprise", "/workspace"),
         ("Generateur", "/generator"),
-        ("Aide / Support", "/assistant"),
         ("Modeles", "/templates"),
-        ("Analyse profils", "/profile-analyzer"),
         ("IA Batch", "/batch"),
+        ("Aide / Support", "/assistant"),
         ("Services BTP", "/services"),
     ]
     if is_admin:
@@ -1395,7 +1440,7 @@ def preview_panel(title: str = "Apercu du modele") -> str:
     return f"""
     <div class="card preview-wrap">
       <h2>{html.escape(title)}</h2>
-      <p class="muted">Change le modele ou charge un PDF : l'aperÃ§u se met a jour avant generation.</p>
+      <p class="muted">Change le modele ou charge un PDF : l'apercu se met a jour avant generation.</p>
       <div class="preview-stage">
         <div id="previewSheet" class="preview-sheet platform_standard">
           <div class="preview-plan" id="previewPlan">
@@ -2291,7 +2336,7 @@ class App(BaseHTTPRequestHandler):
         if path == "/dashboard":
             return self.dashboard()
         if path == "/workspace":
-            return self.workspace()
+            return self.coming_soon("Espace entreprise")
         if path == "/generator":
             return self.generator()
         if path == "/assistant":
@@ -2303,11 +2348,11 @@ class App(BaseHTTPRequestHandler):
         if path.startswith("/template-analysis/"):
             return self.template_analysis(path.split("/", 2)[2])
         if path == "/profile-analyzer":
-            return self.profile_analyzer()
+            return self.coming_soon("Analyse profils routiers")
         if path.startswith("/profile-analysis/"):
-            return self.profile_analysis_detail(path.split("/", 2)[2])
+            return self.coming_soon("Analyse profils routiers")
         if path.startswith("/profile-source/"):
-            return self.profile_source(path.split("/", 2)[2])
+            return self.coming_soon("Analyse profils routiers")
         if path == "/batch":
             return self.batch_page()
         if path == "/services":
@@ -2330,6 +2375,8 @@ class App(BaseHTTPRequestHandler):
             return self.pvit_secret_status()
         if path == "/admin":
             return self.admin()
+        if path == "/admin/validate-payment":
+            return self.validate_payment()
         if path.startswith("/download/"):
             return self.download(path.split("/", 2)[2])
         self.send_html("Page introuvable", "<div class='card'><h2>Page introuvable</h2></div>", 404)
@@ -2343,11 +2390,11 @@ class App(BaseHTTPRequestHandler):
         if path == "/assistant":
             return self.assistant_action()
         if path == "/workspace":
-            return self.workspace_action()
+            return self.coming_soon("Espace entreprise")
         if path == "/templates":
             return self.templates_action()
         if path == "/profile-analyzer":
-            return self.profile_analyzer_action()
+            return self.coming_soon("Analyse profils routiers")
         if path == "/batch":
             return self.batch_action()
         if path == "/payment":
@@ -2366,6 +2413,17 @@ class App(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode("utf-8")
         return {k: v[0] if v else "" for k, v in urllib.parse.parse_qs(body).items()}
+
+    def coming_soon(self, name: str):
+        body = f"""
+        <div class="card">
+          <span class="pill">A venir</span>
+          <h2>{html.escape(name)}</h2>
+          <p>Ce module n'est pas encore actif. Pour le moment, BTP Smart Tools est concentre sur les cartouches professionnelles : import de modeles, analyse de cartouches, generation PDF et traitement batch.</p>
+          <a class="btn green" href="/generator">Aller au generateur de cartouches</a>
+          <a class="btn" href="/templates">Importer une cartouche modele</a>
+        </div>"""
+        self.send_html(name, body)
 
     def home(self):
         body = """
@@ -2400,14 +2458,14 @@ class App(BaseHTTPRequestHandler):
           </div>
         </section>
         <div class="grid3" style="margin-top:20px">
-          <div class="card"><span class="pill">A la cartouche</span><h2>1 200 FCFA / PDF</h2><p>Pour les besoins ponctuels et les petits travaux.</p></div>
-          <div class="card"><span class="pill">Mensuel</span><h2>12 000 FCFA / mois</h2><p>Pour les utilisateurs reguliers et les bureaux actifs.</p></div>
-          <div class="card"><span class="pill">Entreprise</span><h2>108 000 FCFA / an</h2><p>Offre annuelle premium pour structures BTP.</p></div>
+          <div class="card"><span class="pill">Ponctuel</span><h2>1 200 FCFA</h2><p>1 credit = 1 PDF avec cartouche.</p></div>
+          <div class="card"><span class="pill">Decouverte</span><h2>5 000 FCFA</h2><p>10 credits : analyse d'une cartouche + generations PDF.</p></div>
+          <div class="card"><span class="pill">Mensuel</span><h2>12 000 FCFA</h2><p>30 credits inclus pour cartouches, analyses IA et PDF.</p></div>
         </div>
         <div class="grid3" style="margin-top:20px">
           <div class="card roadmap-card"><span class="pill">Disponible</span><h3>Cartouches automatiques</h3><p>Service principal pret pour les tests : PDF, logo, formats, legendes et tableaux.</p></div>
-          <div class="card roadmap-card"><span class="pill">Prochainement</span><h3>Analyse topo</h3><p>Separation des fichiers, codes topo, exports SCR/DXF et preparation AutoCAD.</p></div>
-          <div class="card roadmap-card"><span class="pill">En developpement</span><h3>Outils BTP intelligents</h3><p>Controle chantier, analyse de plans, automatisations et modules IA avances.</p></div>
+          <div class="card roadmap-card"><span class="pill">A venir</span><h3>Analyse topo</h3><p>Separation des fichiers, codes topo, exports SCR/DXF et preparation AutoCAD.</p></div>
+          <div class="card roadmap-card"><span class="pill">A venir</span><h3>Outils BTP intelligents</h3><p>Controle chantier, analyse de plans, automatisations et modules IA avances.</p></div>
         </div>"""
         self.send_html("Accueil", body)
 
@@ -2724,20 +2782,20 @@ class App(BaseHTTPRequestHandler):
           <form class="card" method="post" action="/templates" enctype="multipart/form-data">
             <h2>Modeles de cartouche personnalises</h2>
             {message}
-            <p class="muted">Importe une cartouche personnalisee : image, capture ou PDF. Si la cle OpenAI est active sur Render, le site lance une analyse IA pour comprendre le style, les zones, les cadres et les champs dynamiques.</p>
+            <p class="muted">Importe une cartouche personnalisee : image, capture ou PDF. L'analyse IA coute {CREDIT_COST_TEMPLATE_ANALYSIS} credits et le modele reste ensuite reutilisable plusieurs fois.</p>
             <label>Nom du modele</label>
             <input name="name" value="Modele entreprise">
-            <label>Choisir une cartouche personnalisÃ©e</label>
+            <label>Choisir une cartouche personnalisee</label>
             <input type="file" name="template_file" accept=".png,.jpg,.jpeg,.pdf" required>
             <label>Couleur principale detectee ou souhaitee</label>
             <input type="color" name="theme_color" value="#08213A">
-            <button class="purple">Importer et preparer l'analyse</button>
+            <button class="purple">Importer et analyser - {CREDIT_COST_TEMPLATE_ANALYSIS} credits</button>
           </form>
           <div class="card">
             <h2>Workflow prepare</h2>
             <p>1. Import du modele de cartouche.</p>
             <p>2. Stockage du fichier dans <b>data/uploads</b> et liaison au compte utilisateur.</p>
-            <p>3. Analyse IA ou locale : style, couleur, format, orientation et champs dynamiques.</p>
+            <p>3. Analyse IA ou locale : style, couleur, format, orientation et champs dynamiques. Cout : {CREDIT_COST_TEMPLATE_ANALYSIS} credits.</p>
             <p>4. Sauvegarde dans la bibliotheque personnelle <b>cartouche_templates</b>.</p>
             <p>5. Reutilisation possible plus tard dans le generateur et le tableau de bord.</p>
             <p>6. Les PDF finaux generes sont gardes dans l'historique utilisateur.</p>
@@ -2750,7 +2808,7 @@ class App(BaseHTTPRequestHandler):
         </div>
         <div class="card" style="margin-top:16px">
           <h2>Preparation API IA</h2>
-          <p>Le site est maintenant pret a recevoir une cle API plus tard pour l'analyse intelligente des cartouches personnalisees.</p>
+          <p>L'analyse de cartouche est incluse dans le systeme de credits pour couvrir les couts API et garder une marge.</p>
           <p class="muted">API IA : {html.escape('active' if OPENAI_API_KEY else 'non configuree')} - variable : OPENAI_API_KEY.</p>
           <p class="muted">Les images sont analysees visuellement. Les PDF sont prepares avec metadonnees et texte extrait, puis pourront recevoir une conversion image avancee ensuite.</p>
           <p class="muted">Pour les offres payantes, le modele final pourra etre marque comme paye/valide, telechargeable et reutilisable selon l'abonnement.</p>
@@ -2768,6 +2826,8 @@ class App(BaseHTTPRequestHandler):
             item = form["template_file"] if "template_file" in form else None
             if item is None or not getattr(item, "filename", ""):
                 return self.templates_page("<p class='alert'>Choisis d'abord une image ou un PDF de modele.</p>")
+            if user["role"] != "admin" and user["credits"] < CREDIT_COST_TEMPLATE_ANALYSIS:
+                return self.templates_page(f"<p class='alert'>Credit insuffisant : l'analyse d'une cartouche personnalisee demande {CREDIT_COST_TEMPLATE_ANALYSIS} credits. Ajoute un pack ou un abonnement.</p>")
             suffix = Path(item.filename).suffix.lower()
             if suffix not in (".png", ".jpg", ".jpeg", ".pdf"):
                 return self.templates_page("<p class='alert'>Format non accepte. Utilise PNG, JPG, JPEG ou PDF.</p>")
@@ -2809,6 +2869,8 @@ class App(BaseHTTPRequestHandler):
                     "INSERT INTO cartouche_templates(user_id,name,source_type,source_file,theme_color,ai_status,analysis_json,analysis_summary,paid_status,final_template_file,last_used_at,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (user["id"], name, source_type, str(saved_path), theme_color, ai_status, json.dumps(analysis, ensure_ascii=False), analysis_summary, paid_status, "", "", "active", now()),
                 )
+                if user["role"] != "admin":
+                    con.execute("UPDATE users SET credits=credits-? WHERE id=?", (CREDIT_COST_TEMPLATE_ANALYSIS, user["id"]))
             self.templates_page(message + f"<p class='alert'>{html.escape(analysis_summary)}</p>")
         except Exception as exc:
             self.templates_page(f"<p class='alert'>Import impossible : {html.escape(str(exc))}</p>")
@@ -3117,7 +3179,7 @@ class App(BaseHTTPRequestHandler):
             <label><input type="checkbox" name="show_revisions" checked style="width:auto"> Afficher les revisions</label>
             <h3>Tableau des revisions dynamique</h3>
             <div class="grid">
-              <div><label>Indice</label><input list="revision_index_options" id="revIndex" name="revision_index" value="{html.escape(values.get('revision_index','REV 00'))}" placeholder="Choisir ou Ã©crire"></div>
+              <div><label>Indice</label><input list="revision_index_options" id="revIndex" name="revision_index" value="{html.escape(values.get('revision_index','REV 00'))}" placeholder="Choisir ou ecrire"></div>
               <div><label>Date</label><input id="revDate" name="revision_date" value="{html.escape(values.get('revision_date', today_fr))}"></div>
             </div>
             <label>Description revision</label>
@@ -3211,9 +3273,9 @@ class App(BaseHTTPRequestHandler):
                 """,
                 user,
             )
-        required_credits = len(uploaded_sources)
-        if user["role"] != "admin" and user["subscription"] == "none" and user["credits"] < required_credits:
-            return self.send_html("Credit requis", f"<div class='card'><h2>Credit requis</h2><p>Cette generation demande {required_credits} credit(s). Ajoute un paiement ou connecte-toi en administrateur pour tester gratuitement.</p><a class='btn' href='/dashboard'>Retour</a></div>")
+        required_credits = len(uploaded_sources) * CREDIT_COST_PDF
+        if user["role"] != "admin" and user["credits"] < required_credits:
+            return self.send_html("Credit requis", f"<div class='card'><h2>Credit requis</h2><p>Cette generation demande {required_credits} credit(s). Ajoute un pack ou un abonnement pour continuer.</p><a class='btn green' href='/payment'>Ajouter des credits</a><a class='btn' href='/dashboard'>Retour</a></div>")
         logo_item = form["logo"] if "logo" in form else None
         if logo_item is not None and getattr(logo_item, "filename", ""):
             logo_name = f"logo_{int(time.time())}_{Path(logo_item.filename).name}"
@@ -3243,7 +3305,7 @@ class App(BaseHTTPRequestHandler):
                     "INSERT INTO generations(user_id,project,company,plan_type,scale,format_plan,plan_number,source_file,output_file,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                     (user["id"], item_info["project"], item_info["company"], item_info["plan_type"], item_info["scale"], item_info["format_plan"], item_info["number"], source_name, str(out_path), "generated_multi" if len(uploaded_sources) > 1 else "generated", now()),
                 )
-            if user["role"] != "admin" and user["subscription"] == "none":
+            if user["role"] != "admin":
                 con.execute("UPDATE users SET credits=credits-? WHERE id=?", (required_credits, user["id"]))
         if len(generated) == 1:
             self.redirect(download_url(generated[0]))
@@ -3377,6 +3439,9 @@ class App(BaseHTTPRequestHandler):
         pdfs = collect_batch_pdfs(form, batch_dir)
         if not pdfs:
             return self.send_html("Aucun PDF", "<div class='card'><h2>Aucun PDF detecte</h2><p>Charge plusieurs PDF ou un ZIP contenant des PDF.</p><a class='btn' href='/batch'>Retour</a></div>")
+        required_credits = len(pdfs) * CREDIT_COST_PDF
+        if user["role"] != "admin" and user["credits"] < required_credits:
+            return self.send_html("Credit requis", f"<div class='card'><h2>Credit requis</h2><p>Ce traitement batch demande {required_credits} credit(s), soit 1 credit par PDF.</p><a class='btn green' href='/payment'>Ajouter des credits</a><a class='btn' href='/batch'>Retour</a></div>")
         info = {k: (form.getfirst(k) or "").strip() for k in (
             "project", "company", "company_phone", "company_email", "plan_type", "scale",
             "author", "format_plan", "project_manager", "operator", "validator", "theme_color", "template_id"
@@ -3419,6 +3484,8 @@ class App(BaseHTTPRequestHandler):
                 "INSERT INTO batches(user_id,project,total_files,output_zip,status,created_at) VALUES(?,?,?,?,?,?)",
                 (user["id"], info.get("project", ""), len(generated), str(zip_path), "completed", now()),
             )
+            if user["role"] != "admin":
+                con.execute("UPDATE users SET credits=credits-? WHERE id=?", (required_credits, user["id"]))
         body = f"""
         <div class="card">
           <h2>Traitement IA Batch termine</h2>
@@ -3439,8 +3506,8 @@ class App(BaseHTTPRequestHandler):
         phone = form.get("phone", "")
         with db() as con:
             cur = con.execute(
-                "INSERT INTO payments(user_id,offer,amount,method,phone,provider,provider_mode,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                (user["id"], offer["label"], offer["display"], method, phone, "mypvit", PVIT_MODE, "created", now()),
+                "INSERT INTO payments(user_id,offer,amount,method,phone,provider,provider_mode,status,created_at,offer_key,credits) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (user["id"], offer["label"], offer["display"], method, phone, "mypvit", PVIT_MODE, "created", now(), offer_key, int(offer.get("credits", 0))),
             )
             payment_id = cur.lastrowid
             result = create_pvit_payment(user, offer_key, phone, payment_id)
@@ -3455,6 +3522,7 @@ class App(BaseHTTPRequestHandler):
             <div class="card">
               <h2>Paiement TEST prepare</h2>
               <p><b>Offre :</b> {html.escape(offer['label'])} - {html.escape(offer['display'])}</p>
+              <p><b>Credits inclus :</b> {int(offer.get('credits', 0))}</p>
               <p><b>Methode :</b> {html.escape(method)}</p>
               <p><b>Reference :</b> {html.escape(result['reference'])}</p>
               <p class="alert">{html.escape(result['message'])}</p>
@@ -3471,7 +3539,7 @@ class App(BaseHTTPRequestHandler):
         configured, missing = pvit_config_status()
         config_message = "Configuration PVit TEST complete." if configured else "Configuration incomplete : " + ", ".join(missing)
         offer_options = "".join(
-            f"<option value='{key}'>{html.escape(offer['label'])} - {html.escape(offer['display'])}</option>"
+            f"<option value='{key}'>{html.escape(offer['label'])} - {html.escape(offer['display'])} - {int(offer.get('credits', 0))} credits</option>"
             for key, offer in PAYMENT_OFFERS.items()
         )
         body = f"""
@@ -3501,9 +3569,9 @@ class App(BaseHTTPRequestHandler):
           </div>
         </div>
         <div class="grid3" style="margin-top:16px">
-          <div class="card"><span class="pill">PDF</span><h3>1 200 FCFA</h3><p>Generation ponctuelle.</p></div>
-          <div class="card"><span class="pill">Mensuel</span><h3>12 000 FCFA</h3><p>Utilisateur regulier.</p></div>
-          <div class="card"><span class="pill">Annuel</span><h3>108 000 FCFA</h3><p>Entreprise / bureau.</p></div>
+          <div class="card"><span class="pill">1 credit</span><h3>1 PDF</h3><p>Generation simple avec cartouche.</p></div>
+          <div class="card"><span class="pill">5 credits</span><h3>Analyse cartouche</h3><p>Import et analyse IA d'une cartouche personnalisee reutilisable.</p></div>
+          <div class="card"><span class="pill">Abonnement</span><h3>Credits inclus</h3><p>Les packs couvrent OpenAI, stockage, PVit, support et marge.</p></div>
         </div>
         <div class="card" style="margin-top:16px">
           <h2>Workflows prepares</h2>
@@ -3528,6 +3596,10 @@ class App(BaseHTTPRequestHandler):
         with db() as con:
             if reference:
                 con.execute("UPDATE payments SET status=?, provider_response=? WHERE transaction_ref=?", (status, json.dumps(data, ensure_ascii=False), reference))
+                if status.lower() in ("success", "successful", "paid", "validated", "valide", "validé", "completed", "approved"):
+                    row = con.execute("SELECT id FROM payments WHERE transaction_ref=?", (reference,)).fetchone()
+                    if row:
+                        grant_payment_credits(con, row["id"])
         response = b"OK"
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -3563,6 +3635,8 @@ class App(BaseHTTPRequestHandler):
             status = str(raw.get("status") or raw.get("state") or payment["status"])
             with db() as con:
                 con.execute("UPDATE payments SET status=?, provider_response=? WHERE id=?", (status, json.dumps(raw, ensure_ascii=False), pid))
+                if status.lower() in ("success", "successful", "paid", "validated", "valide", "validé", "completed", "approved"):
+                    grant_payment_credits(con, pid)
             body = f"<div class='card'><h2>Statut PVit</h2><p>Reference : {html.escape(payment['transaction_ref'] or '')}</p><p class='alert'>Statut : {html.escape(status)}</p><pre style='white-space:pre-wrap'>{html.escape(json.dumps(raw, indent=2, ensure_ascii=False))}</pre></div>"
         except Exception as exc:
             body = f"<div class='card'><h2>Erreur statut PVit</h2><p class='alert'>{html.escape(str(exc))}</p></div>"
@@ -3710,14 +3784,14 @@ class App(BaseHTTPRequestHandler):
             modules = con.execute("SELECT * FROM service_modules ORDER BY id").fetchall()
         user_rows = "".join(f"<tr><td>{u['email']}</td><td>{u['role']}</td><td>{u['credits']}</td><td>{u['subscription']}</td></tr>" for u in users)
         gen_rows = "".join(f"<tr><td>{g['created_at']}</td><td>{g['email']}</td><td>{g['plan_number'] or ''}</td><td>{g['format_plan']}</td><td>{g['project']}</td></tr>" for g in gens) or "<tr><td colspan='5'>Aucune generation.</td></tr>"
-        pay_rows = "".join(f"<tr><td>{p['created_at']}</td><td>{p['email']}</td><td>{p['offer']}</td><td>{p['amount']}</td><td>{p['method']}</td><td>{p['transaction_ref'] or ''}</td><td>{p['status']}</td><td><a href='/payment/check/{p['id']}'>Statut</a> | <a href='/payment/qr/{p['id']}'>QR</a></td></tr>" for p in pays) or "<tr><td colspan='8'>Aucun paiement.</td></tr>"
+        pay_rows = "".join(f"<tr><td>{p['created_at']}</td><td>{p['email']}</td><td>{p['offer']}</td><td>{p['amount']}</td><td>{p['method']}</td><td>{p['transaction_ref'] or ''}</td><td>{p['status']}</td><td>{p['credits'] if 'credits' in p.keys() else ''}</td><td><a href='/payment/check/{p['id']}'>Statut</a> | <a href='/payment/qr/{p['id']}'>QR</a> | <a href='/admin/validate-payment?id={p['id']}'>Valider</a></td></tr>" for p in pays) or "<tr><td colspan='9'>Aucun paiement.</td></tr>"
         module_rows = "".join(f"<tr><td>{m['name']}</td><td>{m['category']}</td><td>{m['status']}</td><td>{m['description']}</td></tr>" for m in modules)
         body = f"""
         <h2>Espace administrateur personnel</h2>
         <div class="grid3"><div class="stat"><b>{stats['users']}</b>Utilisateurs</div><div class="stat"><b>{stats['gens']}</b>PDF generes</div><div class="stat"><b>{stats['payments']}</b>Paiements attente</div><div class="stat"><b>{stats['annual']}</b>Abonn. annuels</div></div>
         <div class="card" style="margin-top:16px"><h3>PVit TEST</h3><p>Reception Secret Key et verification technique.</p><a class="btn" href="/pvit/secret-status">Voir reception Secret Key</a><a class="btn dark" href="/payment" style="margin-left:8px">Tester paiement</a></div>
         <div class="grid" style="margin-top:16px"><div class="card"><h3>Utilisateurs</h3><table><tr><th>Email</th><th>Role</th><th>Credits</th><th>Abonnement</th></tr>{user_rows}</table></div><div class="card"><h3>Generations</h3><table><tr><th>Date</th><th>Email</th><th>N plan</th><th>Format</th><th>Projet</th></tr>{gen_rows}</table></div></div>
-        <div class="card" style="margin-top:16px"><h3>Paiements PVit TEST</h3><table><tr><th>Date</th><th>Email</th><th>Offre</th><th>Montant</th><th>Methode</th><th>Reference</th><th>Statut</th><th>Actions</th></tr>{pay_rows}</table></div>
+        <div class="card" style="margin-top:16px"><h3>Paiements PVit TEST</h3><table><tr><th>Date</th><th>Email</th><th>Offre</th><th>Montant</th><th>Methode</th><th>Reference</th><th>Statut</th><th>Credits</th><th>Actions</th></tr>{pay_rows}</table></div>
         <div class="card" style="margin-top:16px"><h3>Modules et futurs services</h3><table><tr><th>Service</th><th>Categorie</th><th>Statut</th><th>Description</th></tr>{module_rows}</table></div>"""
         self.send_html("Admin", body)
 
@@ -3745,6 +3819,21 @@ class App(BaseHTTPRequestHandler):
         self.send_html("Services BTP", body)
 
     def validate_payment(self):
+        user = self.require_login()
+        if not user:
+            return
+        if user["role"] != "admin":
+            return self.send_html("Interdit", "<div class='card'><h2>Acces admin reserve.</h2></div>", 403)
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+        try:
+            payment_id = int((params.get("id") or ["0"])[0])
+        except Exception:
+            payment_id = 0
+        with db() as con:
+            if payment_id:
+                con.execute("UPDATE payments SET status='validated_admin' WHERE id=?", (payment_id,))
+                grant_payment_credits(con, payment_id)
         self.redirect("/admin")
 
     def download(self, name: str):
@@ -3824,9 +3913,9 @@ def support_answer(question: str) -> str:
         """
     elif any(word in low for word in ["paiement", "airtel", "moov", "abonnement", "credit", "crédit"]):
         answer = """
-        <p><b>Paiement :</b> la plateforme est prevue pour accepter le paiement par PDF, les abonnements mensuels et annuels en FCFA.</p>
-        <p>Tarifs affiches : 1 200 FCFA par PDF, 12 000 FCFA par mois, 108 000 FCFA par an.</p>
-        <p>Pour le Gabon, l'objectif est d'integrer Airtel Money et Moov Money/MobiCash lorsque la passerelle sera branchee.</p>
+        <p><b>Paiement :</b> la plateforme fonctionne avec des credits pour couvrir les couts OpenAI, stockage, PVit, support et marge.</p>
+        <p>1 PDF = 1 credit. 1 analyse de cartouche personnalisee = 5 credits. Une fois analysee, la cartouche peut etre reutilisee plusieurs fois.</p>
+        <p>Offres : 1 200 FCFA pour 1 credit, 5 000 FCFA pour 10 credits, 10 000 FCFA pour 20 credits, 12 000 FCFA/mois pour 30 credits, 108 000 FCFA/an pour 450 credits.</p>
         """
     elif any(word in low for word in ["admin", "administrateur", "connexion", "mot de passe"]):
         answer = """
