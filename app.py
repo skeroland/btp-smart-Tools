@@ -1487,13 +1487,13 @@ def render_page(title: str, body: str, user: sqlite3.Row | None = None) -> bytes
 .preview-sheet.platform_modern{{border-color:#334155}}.preview-sheet.platform_modern .preview-cartouche{{background:#fafbfc;border-left:10px solid #e2e8f0}}.preview-sheet.platform_modern .preview-logo{{height:48px;color:#334155}}.preview-sheet.platform_modern .preview-tag,.preview-sheet.platform_modern .preview-footer{{background:#334155}}
 .preview-sheet.platform_topo{{border-color:#0f766e}}.preview-sheet.platform_topo .preview-cartouche{{background:#f0fdfa;border-left:6px solid #0f766e}}.preview-sheet.platform_topo .preview-logo{{color:#0f766e;border-radius:0 0 18px 18px}}.preview-sheet.platform_topo .preview-tag,.preview-sheet.platform_topo .preview-footer{{background:#0f766e}}
 .preview-sheet.platform_engineering{{border-color:#1d4ed8}}.preview-sheet.platform_engineering .preview-cartouche{{background-image:linear-gradient(#dbeafe 1px,transparent 1px),linear-gradient(90deg,#dbeafe 1px,transparent 1px);background-size:18px 18px}}.preview-sheet.platform_engineering .preview-logo{{color:#1d4ed8}}.preview-sheet.platform_engineering .preview-tag,.preview-sheet.platform_engineering .preview-footer{{background:#1d4ed8}}
-.assistant-float{{position:fixed;right:16px;bottom:14px;z-index:60;display:flex;align-items:center;gap:8px;text-decoration:none;color:#102033;max-width:230px;opacity:.92}}
+.assistant-float{{position:fixed;right:12px;bottom:10px;z-index:60;display:flex;align-items:center;gap:6px;text-decoration:none;color:#102033;max-width:168px;opacity:.78}}
 .assistant-float:hover{{opacity:1;transform:translateY(-1px)}}
-.assistant-float .bubble{{background:rgba(255,255,255,.96);border:1px solid rgba(47,140,255,.24);border-radius:12px;padding:8px 10px;box-shadow:0 12px 28px rgba(15,23,42,.16)}}
-.assistant-float .bubble b{{display:block;color:#08213A;font-size:11px;margin-bottom:2px;white-space:nowrap}}
-.assistant-float .bubble span{{display:block;color:#64748b;font-size:10px;line-height:1.18;max-width:150px}}
-.assistant-float .icon{{width:38px;height:38px;border-radius:13px;background:linear-gradient(135deg,#2f8cff,#10b981);color:white;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:18px;box-shadow:0 10px 22px rgba(47,140,255,.26)}}
-@media(max-width:700px){{.assistant-float{{right:10px;bottom:10px;max-width:48px}}.assistant-float .bubble{{display:none}}.assistant-float .icon{{width:46px;height:46px}}}}
+.assistant-float .bubble{{background:rgba(255,255,255,.94);border:1px solid rgba(47,140,255,.20);border-radius:9px;padding:6px 8px;box-shadow:0 8px 18px rgba(15,23,42,.12)}}
+.assistant-float .bubble b{{display:block;color:#08213A;font-size:10px;margin-bottom:1px;white-space:nowrap}}
+.assistant-float .bubble span{{display:none}}
+.assistant-float .icon{{width:32px;height:32px;border-radius:10px;background:linear-gradient(135deg,#2f8cff,#10b981);color:white;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:15px;box-shadow:0 8px 18px rgba(47,140,255,.22)}}
+@media(max-width:700px){{.assistant-float{{right:8px;bottom:8px;max-width:38px}}.assistant-float .bubble{{display:none}}.assistant-float .icon{{width:36px;height:36px;border-radius:11px}}}}
 </style>
 </head>
 <body>
