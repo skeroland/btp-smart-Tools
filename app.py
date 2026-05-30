@@ -3457,26 +3457,33 @@ class App(BaseHTTPRequestHandler):
 
     def assistant(self, result: str = ""):
         body = f"""
+        {cartouche_focus_panel()}
         <div class="grid">
           <form class="card" method="post" action="/assistant">
-            <h2>Assistant support BTP Smart Tools</h2>
-            <p class="muted">Pose une question simple : comment generer une cartouche, importer un PDF, utiliser le batch, choisir un modele, regler un format ou contacter le support.</p>
+            <h2>Assistant cartouches PDF</h2>
+            <p class="muted">Pose une question sur la generation de cartouches, les credits, les modeles importes, le batch PDF, le paiement ou l'historique du compte.</p>
             <label>Votre question</label>
-            <textarea name="question" placeholder="Exemple : comment creer une cartouche ? comment traiter plusieurs PDF ? comment ajouter mon logo ?"></textarea>
-            <button class="purple">Demander de l'aide</button>
-            <p class="alert">Cet assistant est volontairement simple et rapide. Il guide l'utilisateur, mais ne genere pas les cartouches a sa place.</p>
+            <textarea name="question" placeholder="Exemple : combien coute une cartouche ? ou sont mes PDF ? comment reutiliser mon modele ?"></textarea>
+            <button class="purple">Obtenir une reponse</button>
+            <p class="alert">L'assistant guide le client. Les generations se font dans les pages Cartouche, Modeles et Batch PDF.</p>
           </form>
           <div>
             <div class="card">
               <h2>Aide utilisateur</h2>
-              {result or "<p>Bonjour, je suis l'assistant d'aide de BTP Smart Tools. Posez votre question et je vous explique simplement comment utiliser le site.</p>"}
+              {result or "<p>Bonjour, je suis l'assistant cartouche de BTP Smart Tools. Je peux expliquer comment importer un PDF, creer une cartouche, reutiliser un modele, gerer les credits et retrouver les fichiers generes.</p>"}
               <hr>
-              <p class="muted">L'assistant sert uniquement a expliquer, guider et orienter. Il ne genere pas les cartouches et ne traite pas les fichiers a la place de l'utilisateur.</p>
+              <p class="muted">L'assistant explique le fonctionnement. Les PDF, modeles et ZIP restent rattaches au compte utilisateur apres generation.</p>
               <p class="muted">Support : sessouedem15@gmail.com | +241 74 15 37 16 | +241 65 28 05 25</p>
+            </div>
+            <div class="card" style="margin-top:16px">
+              <h3>Questions rapides</h3>
+              <p><b>1 credit :</b> 1 PDF final genere.</p>
+              <p><b>Modele importe :</b> analyse une seule fois, puis reutilisation dans le compte.</p>
+              <p><b>Historique :</b> les PDF et ZIP restent disponibles dans le tableau de bord.</p>
             </div>
           </div>
         </div>"""
-        self.send_html("Aide / Support", body)
+        self.send_html("Assistant cartouches", body)
 
     def assistant_action(self):
         question = self.read_form().get("question", "")
@@ -3563,9 +3570,9 @@ class App(BaseHTTPRequestHandler):
         addElementRow('A1','Surface beton','25 m2',''); addElementRow('V1','Volume','25 x 0.20','5 m3');
         </script>"""
         body = body.replace("{DATALISTS}", datalist_html())
-        body = body.replace("<div class=\"card\">\n            <h2>Ce que l'assistant fait</h2>", preview_panel("Apercu IA Batch") + "<div class=\"card\" style=\"margin-top:16px\">\n            <h2>Ce que l'assistant fait</h2>")
+        body = body.replace("<div class=\"card\">\n            <h2>Ce que le batch fait</h2>", preview_panel("Apercu Batch PDF") + "<div class=\"card\" style=\"margin-top:16px\">\n            <h2>Ce que le batch fait</h2>")
         body += PREVIEW_SCRIPT
-        self.send_html("IA Batch", body)
+        self.send_html("Batch PDF", body)
 
     def batch_action(self):
         user = self.require_login()
@@ -3626,7 +3633,7 @@ class App(BaseHTTPRequestHandler):
                 con.execute("UPDATE users SET credits=credits-? WHERE id=?", (required_credits, user["id"]))
         body = f"""
         <div class="card">
-          <h2>Traitement IA Batch termine</h2>
+          <h2>Traitement Batch PDF termine</h2>
           <p>{len(generated)} PDF ont ete finalises automatiquement.</p>
           <a class="btn green" href="{download_url(zip_path)}">Telecharger tous les plans finalises</a>
           <a class="btn" href="/dashboard">Voir historique</a>
@@ -3977,24 +3984,25 @@ def support_answer(question: str) -> str:
     low = q.lower()
     contact = "<p class='muted'>Support fondateur : sessouedem15@gmail.com | +241 74 15 37 16 | +241 65 28 05 25</p>"
     if not q:
-        return "<p>Posez votre question, par exemple : comment creer une cartouche, comment ajouter un logo, ou comment traiter plusieurs PDF.</p>" + contact
+        return "<p>Posez votre question, par exemple : comment creer une cartouche, comment ajouter un logo, ou retrouver mes PDF generes.</p>" + contact
 
     if any(word in low for word in ["temps", "duree", "durée", "minute", "rapide", "combien"]):
         answer = """
         <p><b>Duree de generation :</b> pour un seul PDF, la generation prend generalement quelques secondes a quelques minutes selon la taille du fichier.</p>
-        <p>Pour plusieurs PDF, le temps depend du nombre de plans, du poids des fichiers et du mode Batch.</p>
+        <p>Pour plusieurs PDF, le temps depend du nombre de plans, du poids des fichiers et du traitement Batch PDF.</p>
         <p>Si un fichier est tres lourd, il faut attendre la fin du traitement avant de telecharger le resultat.</p>
         """
     elif any(word in low for word in ["import", "importer", "charger", "upload", "pdf", "dwg", "fichier"]):
         answer = """
         <p><b>Importer un fichier :</b> ouvrez le generateur, utilisez le champ de chargement PDF, puis selectionnez le plan a traiter.</p>
         <p>Le site utilise le vrai PDF importe pour preparer l'apercu et generer le document final avec cartouche.</p>
-        <p>Pour le moment, le PDF est le format principal. Le DWG pourra etre gere plus tard avec un moteur adapte.</p>
+        <p>Le format conseille est le PDF. Pour un dessin DWG/DXF, exportez d'abord le plan en PDF depuis AutoCAD, puis importez ce PDF dans BTP Smart Tools.</p>
         """
     elif any(word in low for word in ["telecharger", "télécharger", "download", "recuperer", "récupérer", "sortie", "resultat", "résultat"]):
         answer = """
         <p><b>Telechargement :</b> apres la generation, le site ouvre automatiquement le fichier final ou propose le fichier a telecharger.</p>
-        <p>Si vous traitez un seul PDF, vous obtenez un PDF final. Si vous traitez plusieurs PDF avec IA Batch, vous obtenez un fichier ZIP.</p>
+        <p>Si vous traitez un seul PDF, vous obtenez un PDF final. Si vous traitez plusieurs PDF avec Batch PDF, vous obtenez un fichier ZIP.</p>
+        <p>Les PDF et ZIP generes restent aussi dans le tableau de bord du compte utilisateur.</p>
         """
     elif any(word in low for word in ["cartouche", "generer", "générer", "pdf final", "creer", "créer"]):
         answer = """
@@ -4003,11 +4011,13 @@ def support_answer(question: str) -> str:
         <p>2. Chargez le PDF du plan.</p>
         <p>3. Remplissez les informations du projet, de l'entreprise, du format et du modele.</p>
         <p>4. Verifiez l'apercu, puis lancez la generation finale.</p>
+        <p>Chaque PDF final genere consomme 1 credit et reste disponible dans l'historique du compte.</p>
         """
     elif any(word in low for word in ["batch", "plusieurs", "zip", "lot", "multi"]):
         answer = """
-        <p><b>Pour traiter plusieurs PDF :</b> utilisez IA Batch.</p>
+        <p><b>Pour traiter plusieurs PDF :</b> utilisez Batch PDF.</p>
         <p>Vous pouvez charger plusieurs PDF ou un fichier ZIP. Le systeme applique les memes parametres et prepare un ZIP final avec tous les PDF termines.</p>
+        <p>Le cout est de 1 credit par PDF traite. Le ZIP final reste dans l'historique du compte.</p>
         """
     elif any(word in low for word in ["logo", "societe", "société", "entreprise"]):
         answer = """
@@ -4018,7 +4028,7 @@ def support_answer(question: str) -> str:
     elif any(word in low for word in ["modele", "modèle", "personnalise", "personnalisé", "template"]):
         answer = """
         <p><b>Pour les modeles :</b> vous pouvez choisir un modele BTP Smart Tools ou importer une cartouche personnalisee comme reference.</p>
-        <p>Les modeles importes servent a preparer un style de cartouche adapte a votre entreprise.</p>
+        <p>Une cartouche personnalisee coute 5 credits pour l'analyse une seule fois. Ensuite, elle reste dans le compte et peut etre reutilisee pour plusieurs PDF sans refaire l'analyse.</p>
         """
     elif any(word in low for word in ["format", "a4", "a3", "a2", "a1", "a0", "portrait", "paysage"]):
         answer = """
@@ -4028,9 +4038,16 @@ def support_answer(question: str) -> str:
         """
     elif any(word in low for word in ["paiement", "airtel", "moov", "abonnement", "credit", "crédit"]):
         answer = """
-        <p><b>Paiement :</b> la plateforme fonctionne avec des credits pour couvrir les couts OpenAI, stockage, PVit, support et marge.</p>
-        <p>1 PDF = 1 credit. 1 analyse de cartouche personnalisee = 5 credits. Une fois analysee, la cartouche peut etre reutilisee plusieurs fois.</p>
+        <p><b>Paiement et credits :</b> la plateforme fonctionne avec un solde de credits.</p>
+        <p>1 PDF final genere = 1 credit. 1 analyse de cartouche personnalisee = 5 credits une seule fois. Le telechargement d'un PDF deja genere ne consomme pas de nouveau credit.</p>
+        <p>Si le solde arrive a 0, le compte reste accessible, mais il faut acheter un pack ou renouveler l'abonnement pour generer de nouveaux PDF.</p>
         <p>Offres : 1 200 FCFA pour 1 credit, 5 000 FCFA pour 10 credits, 10 000 FCFA pour 20 credits, 12 000 FCFA/mois pour 30 credits, 108 000 FCFA/an pour 450 credits, 250 000 FCFA/an pour 1500 credits entreprise.</p>
+        """
+    elif any(word in low for word in ["historique", "compte", "retrouver", "sauvegarde", "stocke", "stockage", "mes pdf", "archive"]):
+        answer = """
+        <p><b>Historique du compte :</b> les PDF generes, les modeles importes et les ZIP Batch PDF restent rattaches au compte utilisateur.</p>
+        <p>Le client peut revenir plus tard dans son tableau de bord pour telecharger a nouveau ses fichiers.</p>
+        <p>Il faut eviter de supprimer les fichiers du stockage serveur, sinon les anciens liens de telechargement ne seront plus disponibles.</p>
         """
     elif any(word in low for word in ["admin", "administrateur", "connexion", "mot de passe"]):
         answer = """
@@ -4041,11 +4058,11 @@ def support_answer(question: str) -> str:
         answer = """
         <p><b>Fonctionnement du site :</b> BTP Smart Tools aide a preparer des plans PDF professionnels avec cadres, cartouches, logos, legendes, tableaux et informations projet.</p>
         <p>L'utilisateur charge son plan, remplit les informations, choisit le modele, verifie l'apercu puis genere le PDF final.</p>
-        <p>L'assistant sert uniquement a expliquer et guider. Les traitements se font dans les pages du site.</p>
+        <p>Les traitements se font dans les pages Cartouche, Modeles cartouche et Batch PDF. L'assistant sert a expliquer et guider.</p>
         """
     else:
         answer = """
-        <p>Je peux vous aider sur : creation de cartouche, import PDF, logo, formats, modeles, IA Batch, paiement, abonnement ou espace admin.</p>
+        <p>Je peux vous aider sur : creation de cartouche, import PDF, logo, formats, modeles, Batch PDF, paiement, credits, historique du compte ou espace admin.</p>
         <p>Pour une question precise, indiquez simplement ce que vous voulez faire dans le site.</p>
         """
     return f"<p class='alert'>Question recue : {html.escape(q)}</p>{answer}{contact}"
