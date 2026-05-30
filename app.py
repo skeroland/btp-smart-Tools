@@ -221,6 +221,62 @@ def datalist_html() -> str:
     """
 
 
+def cartouche_focus_panel() -> str:
+    return f"""
+    <div class="cartouche-focus">
+      <div>
+        <span class="pill">Service actif maintenant</span>
+        <h2>Cartouches PDF professionnelles</h2>
+        <p>Le site est concentre sur une chose principale : importer un plan PDF ou une image, appliquer une cartouche propre, ajouter logo, format, echelle, legende, tableaux, puis telecharger le PDF final.</p>
+      </div>
+      <div class="focus-cost">
+        <b>Credits</b>
+        <span>1 PDF = {CREDIT_COST_PDF} credit</span>
+        <span>1 cartouche importee = {CREDIT_COST_TEMPLATE_ANALYSIS} credits une seule fois</span>
+        <span>Le modele reste reutilisable apres import.</span>
+      </div>
+    </div>
+    """
+
+
+def cartouche_steps_html() -> str:
+    steps = [
+        ("1", "Charger", "PDF, image ou logo de l'entreprise."),
+        ("2", "Completer", "Projet, echelle, format, revision et modele."),
+        ("3", "Verifier", "Apercu, controle qualite, puis PDF final."),
+    ]
+    return "<div class='steps'>" + "".join(
+        f"<div class='step'><b>{num}</b><strong>{html.escape(title)}</strong><span>{html.escape(text)}</span></div>"
+        for num, title, text in steps
+    ) + "</div>"
+
+
+def cartouche_quality_html(source_loaded: bool = False) -> str:
+    source_state = "pret a verifier apres chargement" if not source_loaded else "fichier charge"
+    checks = [
+        ("Format", "Detection automatique A4/A3/A2/A1/A0 si le PDF le permet."),
+        ("Echelle", "Lecture automatique quand l'echelle est presente dans le nom ou le texte du PDF."),
+        ("Cartouche", "Modele standard ou modele importe, reutilisable dans le generateur."),
+        ("Logo", "PNG/JPG accepte, ajuste automatiquement dans la cartouche."),
+        ("Legende", "Lignes, couleurs et textes modifiables avant generation."),
+        ("Credit", f"Verification avant debit : {CREDIT_COST_PDF} credit par PDF final."),
+    ]
+    rows = "".join(
+        f"<li><b>{html.escape(title)}</b><span>{html.escape(text)}</span></li>"
+        for title, text in checks
+    )
+    return f"""
+    <div class="quality-card">
+      <div class="row" style="justify-content:space-between">
+        <h3>Controle qualite cartouche</h3>
+        <span class="pill">{html.escape(source_state)}</span>
+      </div>
+      <ul>{rows}</ul>
+      <p class="muted">Pour DWG/DXF, exporte le dessin en PDF depuis AutoCAD avant import afin de conserver le vrai rendu du plan.</p>
+    </div>
+    """
+
+
 def download_url(name: str | Path) -> str:
     return "/download/" + urllib.parse.quote(Path(str(name)).name)
 
@@ -1367,11 +1423,10 @@ def render_page(title: str, body: str, user: sqlite3.Row | None = None) -> bytes
         ("Accueil", "/"),
         ("Connexion", "/login") if not logged else ("Tableau de bord", "/dashboard"),
         ("Creer un compte", "/register") if not logged else ("Abonnement", "/payment"),
-        ("Generateur", "/generator"),
-        ("Modeles", "/templates"),
-        ("IA Batch", "/batch"),
-        ("Aide / Support", "/assistant"),
-        ("Services BTP", "/services"),
+        ("Cartouche", "/generator"),
+        ("Modeles cartouche", "/templates"),
+        ("Batch PDF", "/batch"),
+        ("Aide", "/assistant"),
     ]
     if is_admin:
         nav.append(("Admin", "/admin"))
@@ -1388,6 +1443,21 @@ def render_page(title: str, body: str, user: sqlite3.Row | None = None) -> bytes
 <style>
 :root{{--navy:#050b14;--navy2:#0b1220;--blue:#2f8cff;--cyan:#22d3ee;--green:#10b981;--purple:#7c3aed;--amber:#f59e0b;--red:#ef4444;--paper:#07111f;--line:#203044;--text:#eaf2ff;--muted:#94a3b8;--panel:#0b1220}}
 *{{box-sizing:border-box}}body{{margin:0;background:radial-gradient(circle at 12% 0%,rgba(47,140,255,.20),transparent 30%),radial-gradient(circle at 88% 8%,rgba(124,58,237,.18),transparent 28%),linear-gradient(135deg,#050b14,#07111f 48%,#0a1020);font-family:Segoe UI,Arial,sans-serif;color:var(--text)}}body:before{{content:"";position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(34,211,238,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(34,211,238,.035) 1px,transparent 1px);background-size:42px 42px;mask-image:linear-gradient(to bottom,rgba(0,0,0,.85),transparent)}}header{{background:rgba(5,11,20,.82);color:white;position:sticky;top:0;z-index:20;border-bottom:1px solid rgba(34,211,238,.18);backdrop-filter:blur(16px)}}.top{{max-width:1220px;margin:auto;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 18px}}.brand{{display:flex;align-items:center;gap:10px;font-weight:900}}.brand b{{font-size:36px;color:var(--cyan);letter-spacing:0;text-shadow:0 0 26px rgba(34,211,238,.55)}}.brand span{{font-size:11px;line-height:1.1;color:#dbeafe}}nav{{display:flex;gap:8px;flex-wrap:wrap}}nav a{{color:#eaf2ff;text-decoration:none;background:rgba(255,255,255,.055);border:1px solid rgba(148,163,184,.18);padding:10px 12px;border-radius:8px;font-weight:800;transition:.18s}}nav a:hover{{background:rgba(47,140,255,.22);border-color:rgba(34,211,238,.55);transform:translateY(-1px)}}.wrap{{max-width:1220px;margin:auto;padding:22px;position:relative}}.grid{{display:grid;grid-template-columns:1fr 1fr;gap:20px}}.grid3{{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}}.card{{background:linear-gradient(180deg,rgba(15,23,42,.92),rgba(8,15,28,.92));border:1px solid rgba(148,163,184,.20);border-radius:14px;padding:22px;box-shadow:0 20px 54px rgba(0,0,0,.28);color:#eaf2ff}}.hero{{position:relative;overflow:hidden;background:linear-gradient(135deg,rgba(5,11,20,.98),rgba(9,25,48,.96) 54%,rgba(19,18,48,.94));color:white;border:1px solid rgba(34,211,238,.22);border-radius:20px;padding:48px;display:grid;grid-template-columns:1fr 1fr;gap:32px;align-items:center;box-shadow:0 28px 80px rgba(0,0,0,.42)}}.hero:before{{content:"";position:absolute;inset:-40%;background:radial-gradient(circle,rgba(34,211,238,.22),transparent 28%);animation:floatGlow 9s ease-in-out infinite}}@keyframes floatGlow{{0%,100%{{transform:translate(-4%,2%)}}50%{{transform:translate(4%,-2%)}}}}.hero>*{{position:relative}}.hero h1{{font-size:78px;line-height:.9;margin:0;letter-spacing:0;text-shadow:0 0 36px rgba(47,140,255,.34)}}.hero h2{{font-size:27px;margin:10px 0 14px;color:#dbeafe}}.hero p{{color:#b7c7dd;font-size:17px;line-height:1.55}}label{{display:block;font-size:13px;font-weight:900;color:#c7ddf6;margin:10px 0 5px}}input,select,textarea{{width:100%;border:1px solid rgba(148,163,184,.28);border-radius:9px;padding:12px;font:inherit;background:#f8fafc;color:#102033;outline:none}}input:focus,select:focus,textarea:focus{{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(34,211,238,.16)}}textarea{{min-height:95px;resize:vertical}}button,.btn{{border:0;border-radius:9px;padding:12px 17px;font-weight:900;color:white;background:linear-gradient(135deg,#2f8cff,#22d3ee);cursor:pointer;min-height:44px;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 12px 30px rgba(47,140,255,.25);transition:.18s}}button:hover,.btn:hover{{transform:translateY(-1px);filter:brightness(1.07)}}.green{{background:linear-gradient(135deg,#10b981,#22d3ee)}}.purple{{background:linear-gradient(135deg,#7c3aed,#2f8cff)}}.amber{{background:linear-gradient(135deg,#f59e0b,#b45309)}}.red{{background:linear-gradient(135deg,#ef4444,#b91c1c)}}.dark{{background:linear-gradient(135deg,#0f172a,#111827)}}.row{{display:flex;gap:10px;align-items:center;flex-wrap:wrap}}.badge,.pill{{background:rgba(34,211,238,.12);color:#8deeff;border:1px solid rgba(34,211,238,.28);border-radius:999px;padding:7px 11px;font-weight:900;font-size:12px}}.muted{{color:var(--muted)}}table{{width:100%;border-collapse:collapse}}th,td{{border-bottom:1px solid rgba(148,163,184,.18);padding:11px;text-align:left;font-size:14px}}th{{background:rgba(15,23,42,.75);color:#dbeafe}}.stat{{background:linear-gradient(180deg,rgba(15,23,42,.95),rgba(8,15,28,.96));border:1px solid rgba(34,211,238,.18);border-radius:12px;padding:18px;box-shadow:0 16px 36px rgba(0,0,0,.24);color:#eaf2ff}}.stat b{{font-size:30px;color:var(--cyan);display:block}}.sheet{{background:white;border:2px solid #172033;min-height:450px;display:grid;grid-template-columns:1fr 170px;color:#111827;box-shadow:0 0 0 1px rgba(34,211,238,.22),0 28px 70px rgba(0,0,0,.42);transform:perspective(900px) rotateY(-4deg);border-radius:5px;overflow:hidden}}.draw{{padding:24px;border-right:2px solid #172033;background:linear-gradient(180deg,#ffffff,#fbfdff)}}.cartouche{{background:#fdfefe}}.cartouche div{{border-bottom:1px solid #172033;padding:9px;font-size:11px}}.cartouche .ske{{font-size:40px;color:var(--blue);font-weight:900;text-align:center;background:#eef6ff}}.legend-line{{display:grid;grid-template-columns:120px 110px 1fr;gap:8px;align-items:end;margin-bottom:8px}}.alert{{padding:13px;border-radius:10px;background:rgba(34,211,238,.10);color:#c8f5ff;font-weight:900;border:1px solid rgba(34,211,238,.24)}}.feature-row{{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:18px}}.feature{{background:rgba(255,255,255,.06);border:1px solid rgba(34,211,238,.16);border-radius:12px;padding:16px}}.feature b{{display:block;color:white;margin-bottom:6px}}.feature span{{color:#b7c7dd;font-size:13px}}.roadmap-card{{position:relative;overflow:hidden}}.roadmap-card:after{{content:"";position:absolute;right:-35px;top:-35px;width:110px;height:110px;border-radius:50%;background:radial-gradient(circle,rgba(34,211,238,.18),transparent 65%)}}@media(max-width:900px){{.grid,.grid3,.hero,.feature-row{{grid-template-columns:1fr}}.hero h1{{font-size:48px}}.hero{{padding:28px}}.sheet{{grid-template-columns:1fr;transform:none}}.draw{{border-right:0;border-bottom:2px solid #111827}}}}
+</style>
+<style>
+.cartouche-focus{{display:grid;grid-template-columns:1.4fr .9fr;gap:16px;align-items:center;background:linear-gradient(135deg,rgba(34,211,238,.13),rgba(16,185,129,.08));border:1px solid rgba(34,211,238,.28);border-radius:14px;padding:18px;margin-bottom:16px}}
+.cartouche-focus h2{{margin:8px 0 6px}}.cartouche-focus p{{margin:0;color:#c7d7ee;line-height:1.5}}
+.focus-cost{{display:grid;gap:7px;background:rgba(2,6,23,.36);border:1px solid rgba(148,163,184,.22);border-radius:12px;padding:14px}}
+.focus-cost b{{color:#8deeff;font-size:18px}}.focus-cost span{{color:#dbeafe;font-weight:700}}
+.steps{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:0 0 16px}}
+.step{{display:grid;grid-template-columns:42px 1fr;gap:5px 10px;align-items:center;background:rgba(255,255,255,.06);border:1px solid rgba(34,211,238,.18);border-radius:12px;padding:13px}}
+.step b{{grid-row:span 2;width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#22d3ee;color:#08213A;font-weight:900}}
+.step strong{{color:#fff}}.step span{{color:#b7c7dd;font-size:12px}}
+.quality-card{{background:rgba(2,6,23,.38);border:1px solid rgba(16,185,129,.28);border-radius:12px;padding:16px;margin-top:16px}}
+.quality-card h3{{margin:0}}.quality-card ul{{list-style:none;padding:0;margin:12px 0;display:grid;gap:8px}}
+.quality-card li{{display:grid;grid-template-columns:120px 1fr;gap:10px;padding:9px;border-bottom:1px solid rgba(148,163,184,.16)}}
+.quality-card li b{{color:#8deeff}}.quality-card li span{{color:#dbeafe}}
+@media(max-width:900px){{.cartouche-focus,.steps{{grid-template-columns:1fr}}.quality-card li{{grid-template-columns:1fr}}}}
 </style>
 <style>
 .preview-wrap{{position:sticky;top:92px}}
@@ -1429,7 +1499,7 @@ def render_page(title: str, body: str, user: sqlite3.Row | None = None) -> bytes
 <header><div class="top"><div class="brand"><b>BTP</b><span>SMART TOOLS<br>PLANS & CARTOUCHES<br>by SKE System</span></div><nav>{links}</nav>{user_badge}</div></header>
 <main class="wrap">{body}</main>
 <a class="assistant-float" href="/assistant" title="Ouvrir l'assistant support">
-  <div class="bubble"><b>Assistant BTP Smart Tools</b><span>Bonjour, besoin d'aide pour creer une cartouche ou comprendre le site ?</span></div>
+  <div class="bubble"><b>Assistant Cartouche</b><span>Aide pour PDF, logo, modele, credits et telechargement.</span></div>
   <div class="icon">?</div>
 </a>
 </body>
@@ -2339,8 +2409,10 @@ class App(BaseHTTPRequestHandler):
         if path == "/dashboard":
             return self.dashboard()
         if path == "/workspace":
-            return self.coming_soon("Espace entreprise")
+            return self.redirect("/generator")
         if path == "/generator":
+            return self.generator()
+        if path == "/cartouches":
             return self.generator()
         if path == "/assistant":
             return self.assistant()
@@ -2351,15 +2423,15 @@ class App(BaseHTTPRequestHandler):
         if path.startswith("/template-analysis/"):
             return self.template_analysis(path.split("/", 2)[2])
         if path == "/profile-analyzer":
-            return self.coming_soon("Analyse profils routiers")
+            return self.redirect("/generator")
         if path.startswith("/profile-analysis/"):
-            return self.coming_soon("Analyse profils routiers")
+            return self.redirect("/generator")
         if path.startswith("/profile-source/"):
-            return self.coming_soon("Analyse profils routiers")
+            return self.redirect("/generator")
         if path == "/batch":
             return self.batch_page()
         if path == "/services":
-            return self.services()
+            return self.redirect("/generator")
         if path == "/payment":
             return self.payment_page()
         if path.startswith("/payment/check/"):
@@ -2395,11 +2467,11 @@ class App(BaseHTTPRequestHandler):
         if path == "/assistant":
             return self.assistant_action()
         if path == "/workspace":
-            return self.coming_soon("Espace entreprise")
+            return self.redirect("/generator")
         if path == "/templates":
             return self.templates_action()
         if path == "/profile-analyzer":
-            return self.coming_soon("Analyse profils routiers")
+            return self.redirect("/generator")
         if path == "/batch":
             return self.batch_action()
         if path == "/payment":
@@ -2422,27 +2494,27 @@ class App(BaseHTTPRequestHandler):
     def coming_soon(self, name: str):
         body = f"""
         <div class="card">
-          <span class="pill">A venir</span>
+          <span class="pill">Indisponible</span>
           <h2>{html.escape(name)}</h2>
-          <p>Ce module n'est pas encore actif. Pour le moment, BTP Smart Tools est concentre sur les cartouches professionnelles : import de modeles, analyse de cartouches, generation PDF et traitement batch.</p>
+          <p>Ce module n'est pas disponible sur le site public pour le moment. BTP Smart Tools est concentre uniquement sur les cartouches professionnelles : import de modeles, generation PDF et traitement batch.</p>
           <a class="btn green" href="/generator">Aller au generateur de cartouches</a>
           <a class="btn" href="/templates">Importer une cartouche modele</a>
         </div>"""
         self.send_html(name, body)
 
     def home(self):
-        body = """
+        body = cartouche_focus_panel() + """
         <section class="hero">
           <div>
             <span class="pill">Service actif : cartouches professionnelles</span>
-            <h1>BTP Smart Tools</h1>
-            <h2>Cartouches automatiques aujourd'hui. Outils BTP intelligents demain.</h2>
-            <p>La premiere version est concentree sur la generation de cartouches professionnelles : PDF, cadres, logos, legendes, tableaux, formats et mise en page propre. Les modules topo, AutoCAD et analyse technique arrivent progressivement.</p>
-            <div class="row"><a class="btn green" href="/register">Creer un compte</a><a class="btn" href="/login">Acceder au compte</a><a class="btn dark" href="/services">Voir les services</a></div>
+            <h1>Cartouches PDF</h1>
+            <h2>Le service principal de BTP Smart Tools.</h2>
+            <p>Pour le moment, la plateforme est volontairement concentree sur les cartouches : PDF, cadres, logos, legendes, tableaux, formats, echelle et mise en page professionnelle. Les autres modules restent annonces, mais inactifs.</p>
+            <div class="row"><a class="btn green" href="/register">Creer un compte</a><a class="btn" href="/login">Acceder au compte</a><a class="btn dark" href="/generator">Generer une cartouche</a></div>
             <div class="feature-row">
               <div class="feature"><b>Actif maintenant</b><span>Generation de cartouches et PDF propres.</span></div>
-              <div class="feature"><b>Compte client</b><span>Credits, abonnements et historique des PDF generes.</span></div>
-              <div class="feature"><b>Support integre</b><span>Assistant visible pour guider les utilisateurs.</span></div>
+              <div class="feature"><b>Compte client</b><span>Credits, abonnements, historique et modeles importes.</span></div>
+              <div class="feature"><b>Controle avant PDF</b><span>Format, echelle, logo, legende et modele visibles avant generation.</span></div>
             </div>
           </div>
           <div class="sheet">
@@ -2462,15 +2534,16 @@ class App(BaseHTTPRequestHandler):
             <div class="cartouche"><div class="ske">BTP</div><div>PROJET<br><b>Jardin Botanique</b></div><div>ENTREPRISE<br><b>SKE System</b></div><div>TYPE PLAN<br><b>Plan beton</b></div><div>ECHELLE<br><b>1/100</b></div><div>DATE<br><b>11/05/2026</b></div><div>N PLAN<br><b>BTP-001</b></div></div>
           </div>
         </section>
+        """ + cartouche_steps_html() + """
         <div class="grid3" style="margin-top:20px">
           <div class="card"><span class="pill">Ponctuel</span><h2>1 200 FCFA</h2><p>1 credit = 1 PDF avec cartouche.</p></div>
           <div class="card"><span class="pill">Decouverte</span><h2>5 000 FCFA</h2><p>10 credits : analyse d'une cartouche + generations PDF.</p></div>
           <div class="card"><span class="pill">Mensuel</span><h2>12 000 FCFA</h2><p>30 credits inclus pour cartouches, analyses IA et PDF.</p></div>
         </div>
         <div class="grid3" style="margin-top:20px">
-          <div class="card roadmap-card"><span class="pill">Disponible</span><h3>Cartouches automatiques</h3><p>Service principal pret pour les tests : PDF, logo, formats, legendes et tableaux.</p></div>
-          <div class="card roadmap-card"><span class="pill">A venir</span><h3>Analyse topo</h3><p>Separation des fichiers, codes topo, exports SCR/DXF et preparation AutoCAD.</p></div>
-          <div class="card roadmap-card"><span class="pill">A venir</span><h3>Outils BTP intelligents</h3><p>Controle chantier, analyse de plans, automatisations et modules IA avances.</p></div>
+          <div class="card roadmap-card"><span class="pill">Disponible</span><h3>Cartouches automatiques</h3><p>PDF, logo, formats, legendes et tableaux.</p></div>
+          <div class="card roadmap-card"><span class="pill">Disponible</span><h3>Modeles personnalises</h3><p>Import d'une cartouche d'entreprise, analyse une seule fois, reutilisation ensuite.</p></div>
+          <div class="card roadmap-card"><span class="pill">Disponible</span><h3>Batch PDF</h3><p>Traitement de plusieurs PDF avec la meme cartouche et numeros automatiques.</p></div>
         </div>"""
         self.send_html("Accueil", body)
 
@@ -2578,11 +2651,18 @@ class App(BaseHTTPRequestHandler):
             for b in batches
         ) or "<tr><td colspan='5'>Aucun traitement batch.</td></tr>"
         body = f"""
-        <h2>Tableau de bord utilisateur</h2>
+        {cartouche_focus_panel()}
+        <h2>Tableau de bord cartouches</h2>
         <div class="grid3">
           <div class="stat"><b>{user['credits']}</b>Credits</div>
           <div class="stat"><b>{html.escape(user['subscription'])}</b>Abonnement</div>
           <div class="stat"><b>{len(gens)}</b>Dernieres generations</div>
+        </div>
+        <div style="margin-top:16px">{cartouche_steps_html()}</div>
+        <div class="grid3" style="margin-top:16px">
+          <a class="btn green" href="/generator">Generer une cartouche</a>
+          <a class="btn purple" href="/templates">Importer un modele</a>
+          <a class="btn dark" href="/batch">Traiter plusieurs PDF</a>
         </div>
         <div class="grid" style="margin-top:16px">
           <div class="card">
@@ -2668,7 +2748,7 @@ class App(BaseHTTPRequestHandler):
           <h3>Securite et confidentialite</h3>
           <p class="muted">Premiere base : chaque fichier est lie au compte connecte et reste invisible pour les autres utilisateurs. En production avancee, on passera au stockage prive permanent avec liens temporaires, roles par entreprise et sauvegardes.</p>
           <div class="grid3">
-            <div class="stat"><b>2FA</b>Code email/SMS a venir</div>
+            <div class="stat"><b>2FA</b>Reserve admin</div>
             <div class="stat"><b>Roles</b>Admin, chef projet, lecteur</div>
             <div class="stat"><b>Prive</b>Documents separes par compte</div>
           </div>
@@ -2824,16 +2904,17 @@ class App(BaseHTTPRequestHandler):
             for tpl in PLATFORM_TEMPLATES.values()
         )
         body = f"""
+        {cartouche_focus_panel()}
         <div class="card">
           <h2>Bibliotheque de modeles BTP Smart Tools</h2>
-          <p class="muted">Ces modeles sont proposes directement par la plateforme : standards, premium, modernes, BTP, topographie et ingenierie.</p>
+          <p class="muted">Ces modeles servent uniquement aux cartouches. Le client choisit un modele pret a l'emploi ou importe une cartouche d'entreprise qui sera analysee une seule fois, puis reutilisee plusieurs fois.</p>
           <div class="grid3">{platform_cards}</div>
         </div>
         <div class="grid">
           <form class="card" method="post" action="/templates" enctype="multipart/form-data">
             <h2>Modeles de cartouche personnalises</h2>
             {message}
-            <p class="muted">Importe une cartouche personnalisee : image, capture ou PDF. L'analyse IA coute {CREDIT_COST_TEMPLATE_ANALYSIS} credits et le modele reste ensuite reutilisable plusieurs fois.</p>
+            <p class="muted">Importe une cartouche personnalisee : image, capture ou PDF. L'analyse coute {CREDIT_COST_TEMPLATE_ANALYSIS} credits une seule fois. Ensuite, le modele reste dans le compte et peut etre reutilise pour plusieurs PDF.</p>
             <label>Nom du modele</label>
             <input name="name" value="Modele entreprise">
             <label>Choisir une cartouche personnalisee</label>
@@ -2843,14 +2924,14 @@ class App(BaseHTTPRequestHandler):
             <button class="purple">Importer et analyser - {CREDIT_COST_TEMPLATE_ANALYSIS} credits</button>
           </form>
           <div class="card">
-            <h2>Workflow prepare</h2>
-            <p>1. Import du modele de cartouche.</p>
-            <p>2. Stockage du fichier dans <b>data/uploads</b> et liaison au compte utilisateur.</p>
-            <p>3. Analyse IA ou locale : style, couleur, format, orientation et champs dynamiques. Cout : {CREDIT_COST_TEMPLATE_ANALYSIS} credits.</p>
-            <p>4. Sauvegarde dans la bibliotheque personnelle <b>cartouche_templates</b>.</p>
-            <p>5. Reutilisation possible plus tard dans le generateur et le tableau de bord.</p>
-            <p>6. Les PDF finaux generes sont gardes dans l'historique utilisateur.</p>
+            <h2>Principe simple</h2>
+            <p>1. Le client importe sa cartouche une seule fois.</p>
+            <p>2. Le systeme analyse le style, la couleur, le format, l'orientation et les champs.</p>
+            <p>3. Le modele est sauvegarde dans sa bibliotheque personnelle.</p>
+            <p>4. Il le reutilise dans le generateur sans repayer l'analyse a chaque PDF.</p>
+            <p>5. Chaque PDF final consomme seulement le credit de generation.</p>
             <p class="alert">Important : l'objectif final n'est pas de coller l'image en fond, mais de reconstruire une cartouche dynamique propre, modifiable et reutilisable.</p>
+            {cartouche_quality_html()}
           </div>
         </div>
         <div class="card" style="margin-top:16px">
@@ -3183,6 +3264,8 @@ class App(BaseHTTPRequestHandler):
         template_options = f"<optgroup label='Modeles BTP Smart Tools'>{platform_options}</optgroup><optgroup label='Mes modeles importes'>{user_options}</optgroup>"
         today_fr = datetime.now().strftime("%d/%m/%Y")
         body = f"""
+        {cartouche_focus_panel()}
+        {cartouche_steps_html()}
         <form class="grid" method="post" action="/generate" enctype="multipart/form-data">
           {datalist_html()}
           <div class="card">
@@ -3222,6 +3305,7 @@ class App(BaseHTTPRequestHandler):
               <div><label>Couleur personnalisee</label><input name="theme_color" type="color" value="#08213A"></div>
             </div>
             <p class="alert">Numero du plan automatique : le systeme genere BTP-001, BTP-002, BTP-003... a chaque nouveau PDF. Si le PDF contient une echelle lisible, elle est detectee automatiquement.</p>
+            {cartouche_quality_html()}
             <h3>Zones a afficher</h3>
             <div class="grid">
               <label><input type="checkbox" name="show_legend" checked style="width:auto"> Afficher la legende</label>
@@ -3399,11 +3483,11 @@ class App(BaseHTTPRequestHandler):
         user = self.require_login()
         if not user:
             return
-        body = """
+        body = cartouche_focus_panel() + cartouche_steps_html() + """
         <form class="grid" method="post" action="/batch" enctype="multipart/form-data">
           {DATALISTS}
           <div class="card">
-            <h2>Assistant IA Batch - traitement automatique</h2>
+            <h2>Batch cartouches PDF</h2>
             <p class="muted">Charge plusieurs PDF ou un ZIP contenant des PDF. Le systeme applique automatiquement la meme cartouche a tous les plans, avec numeros automatiques.</p>
             <label>PDF multiples ou fichier ZIP</label>
             <input type="file" name="files" multiple accept=".pdf,.zip">
@@ -3455,10 +3539,10 @@ class App(BaseHTTPRequestHandler):
             <input type="hidden" name="element_columns_json" id="element_columns_json">
             <input type="hidden" name="element_rows_json" id="element_rows_json">
             <hr>
-            <button class="purple" onclick="saveLegends()">Lancer le traitement IA Batch</button>
+            <button class="purple" onclick="saveLegends()">Lancer le traitement batch PDF</button>
           </div>
           <div class="card">
-            <h2>Ce que l'assistant fait</h2>
+            <h2>Ce que le batch fait</h2>
             <p>1. Detecte tous les PDF.</p>
             <p>2. Applique les memes informations a chaque plan.</p>
             <p>3. Detecte le format PDF si Automatique est choisi.</p>
@@ -3832,42 +3916,19 @@ class App(BaseHTTPRequestHandler):
             users = con.execute("SELECT * FROM users ORDER BY id DESC").fetchall()
             gens = con.execute("SELECT g.*,u.email FROM generations g JOIN users u ON u.id=g.user_id ORDER BY g.id DESC LIMIT 8").fetchall()
             pays = con.execute("SELECT p.*,u.email FROM payments p JOIN users u ON u.id=p.user_id ORDER BY p.id DESC LIMIT 8").fetchall()
-            modules = con.execute("SELECT * FROM service_modules ORDER BY id").fetchall()
         user_rows = "".join(f"<tr><td>{u['email']}</td><td>{u['role']}</td><td>{u['credits']}</td><td>{u['subscription']}</td></tr>" for u in users)
         gen_rows = "".join(f"<tr><td>{g['created_at']}</td><td>{g['email']}</td><td>{g['plan_number'] or ''}</td><td>{g['format_plan']}</td><td>{g['project']}</td></tr>" for g in gens) or "<tr><td colspan='5'>Aucune generation.</td></tr>"
         pay_rows = "".join(f"<tr><td>{p['created_at']}</td><td>{p['email']}</td><td>{p['offer']}</td><td>{p['amount']}</td><td>{p['method']}</td><td>{p['transaction_ref'] or ''}</td><td>{p['status']}</td><td>{p['credits'] if 'credits' in p.keys() else ''}</td><td><a href='/payment/check/{p['id']}'>Statut</a> | <a href='/payment/qr/{p['id']}'>QR</a> | <a href='/admin/validate-payment?id={p['id']}'>Valider</a></td></tr>" for p in pays) or "<tr><td colspan='9'>Aucun paiement.</td></tr>"
-        module_rows = "".join(f"<tr><td>{m['name']}</td><td>{m['category']}</td><td>{m['status']}</td><td>{m['description']}</td></tr>" for m in modules)
         body = f"""
         <h2>Espace administrateur personnel</h2>
         <div class="grid3"><div class="stat"><b>{stats['users']}</b>Utilisateurs</div><div class="stat"><b>{stats['gens']}</b>PDF generes</div><div class="stat"><b>{stats['payments']}</b>Paiements attente</div><div class="stat"><b>{stats['annual']}</b>Abonn. annuels</div></div>
         <div class="card" style="margin-top:16px"><h3>PVit TEST</h3><p>Reception Secret Key et verification technique.</p><a class="btn" href="/pvit/secret-status">Voir reception Secret Key</a><a class="btn dark" href="/payment" style="margin-left:8px">Tester paiement</a></div>
         <div class="grid" style="margin-top:16px"><div class="card"><h3>Utilisateurs</h3><table><tr><th>Email</th><th>Role</th><th>Credits</th><th>Abonnement</th></tr>{user_rows}</table></div><div class="card"><h3>Generations</h3><table><tr><th>Date</th><th>Email</th><th>N plan</th><th>Format</th><th>Projet</th></tr>{gen_rows}</table></div></div>
-        <div class="card" style="margin-top:16px"><h3>Paiements PVit TEST</h3><table><tr><th>Date</th><th>Email</th><th>Offre</th><th>Montant</th><th>Methode</th><th>Reference</th><th>Statut</th><th>Credits</th><th>Actions</th></tr>{pay_rows}</table></div>
-        <div class="card" style="margin-top:16px"><h3>Modules et futurs services</h3><table><tr><th>Service</th><th>Categorie</th><th>Statut</th><th>Description</th></tr>{module_rows}</table></div>"""
+        <div class="card" style="margin-top:16px"><h3>Paiements PVit TEST</h3><table><tr><th>Date</th><th>Email</th><th>Offre</th><th>Montant</th><th>Methode</th><th>Reference</th><th>Statut</th><th>Credits</th><th>Actions</th></tr>{pay_rows}</table></div>"""
         self.send_html("Admin", body)
 
     def services(self):
-        user = self.require_login()
-        if not user:
-            return
-        with db() as con:
-            modules = con.execute("SELECT * FROM service_modules ORDER BY id").fetchall()
-        cards = ""
-        for module in modules:
-            badge = "Disponible" if module["status"] == "actif" else "Prochainement"
-            color = "green" if module["status"] == "actif" else "dark"
-            cards += f"""
-            <div class="card roadmap-card">
-              <span class="pill">{html.escape(module['category'])}</span>
-              <h3>{html.escape(module['name'])}</h3>
-              <p>{html.escape(module['description'])}</p>
-              <span class="btn {color}" style="pointer-events:none">{badge}</span>
-            </div>"""
-        body = f"""
-        <h2>Services BTP Smart Tools</h2>
-        <p class="muted">Aujourd'hui, le service principal actif est la generation de cartouches professionnelles. Les autres modules sont affiches comme prochains outils de la plateforme et seront ajoutes progressivement apres tests.</p>
-        <div class="grid3">{cards}</div>"""
-        self.send_html("Services BTP", body)
+        return self.redirect("/generator")
 
     def validate_payment(self):
         user = self.require_login()
