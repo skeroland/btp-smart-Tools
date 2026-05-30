@@ -234,7 +234,7 @@ def cartouche_focus_panel() -> str:
         <b>Credits</b>
         <span>1 PDF = {CREDIT_COST_PDF} credit</span>
         <span>1 cartouche importee = {CREDIT_COST_TEMPLATE_ANALYSIS} credits une seule fois</span>
-        <span>Le modele reste reutilisable apres import.</span>
+        <span>Le modele est analyse, stocke dans le compte et reutilisable ensuite.</span>
       </div>
     </div>
     """
@@ -257,7 +257,7 @@ def cartouche_quality_html(source_loaded: bool = False) -> str:
     checks = [
         ("Format", "Detection automatique A4/A3/A2/A1/A0 si le PDF le permet."),
         ("Echelle", "Lecture automatique quand l'echelle est presente dans le nom ou le texte du PDF."),
-        ("Cartouche", "Modele standard ou modele importe, reutilisable dans le generateur."),
+        ("Cartouche", "Le modele personnalise est analyse une seule fois, puis garde dans le compte."),
         ("Logo", "PNG/JPG accepte, ajuste automatiquement dans la cartouche."),
         ("Legende", "Lignes, couleurs et textes modifiables avant generation."),
         ("Credit", f"Verification avant debit : {CREDIT_COST_PDF} credit par PDF final."),
@@ -2510,7 +2510,7 @@ class App(BaseHTTPRequestHandler):
             <span class="pill">Service actif : cartouches professionnelles</span>
             <h1>Cartouches PDF</h1>
             <h2>Le service principal de BTP Smart Tools.</h2>
-            <p>Pour le moment, la plateforme est volontairement concentree sur les cartouches : PDF, cadres, logos, legendes, tableaux, formats, echelle et mise en page professionnelle. Les autres modules restent annonces, mais inactifs.</p>
+            <p>La plateforme est concentree sur les cartouches PDF : cadres, logos, legendes, tableaux, formats, echelle et mise en page professionnelle.</p>
             <div class="row"><a class="btn green" href="/register">Creer un compte</a><a class="btn" href="/login">Acceder au compte</a><a class="btn dark" href="/generator">Generer une cartouche</a></div>
             <div class="feature-row">
               <div class="feature"><b>Actif maintenant</b><span>Generation de cartouches et PDF propres.</span></div>
@@ -2681,12 +2681,12 @@ class App(BaseHTTPRequestHandler):
         </div>
         <div class="card" style="margin-top:16px">
           <h3>Bibliotheque intelligente de modeles</h3>
-          <p class="muted">Chaque cartouche importee est liee au compte utilisateur, stockee, analysee et reutilisable plus tard dans le generateur.</p>
+          <p class="muted">Chaque cartouche importee est liee au compte utilisateur, stockee, analysee une seule fois et reutilisable plus tard dans le generateur sans refaire l'analyse.</p>
           <table><tr><th>Modele</th><th>Type</th><th>Analyse</th><th>Acces</th><th>Actions</th></tr>{template_rows}</table>
           <p><a class="btn purple" href="/templates">Importer ou gerer mes modeles</a></p>
         </div>
-        <div class="card" style="margin-top:16px"><h3>Bibliotheque des cartouches realisees</h3><p class="muted">Tous les PDF/cartouches generes restent accessibles ici pour les retrouver, les telecharger ou les renvoyer plus tard.</p><table><tr><th>Date</th><th>N plan</th><th>Projet</th><th>Format</th><th>PDF</th></tr>{rows}</table></div>
-        <div class="card" style="margin-top:16px"><h3>Traitements IA Batch / ZIP</h3><table><tr><th>Date</th><th>Projet</th><th>PDF</th><th>Statut</th><th>Fichier</th></tr>{batch_rows}</table></div>"""
+        <div class="card" style="margin-top:16px"><h3>Bibliotheque des cartouches realisees</h3><p class="muted">Tous les PDF/cartouches generes restent dans le compte utilisateur. Le client peut les retrouver, les telecharger ou les renvoyer plus tard, meme s'il les a deja envoyes par mail ou sauvegardes sur son ordinateur.</p><table><tr><th>Date</th><th>N plan</th><th>Projet</th><th>Format</th><th>PDF</th></tr>{rows}</table></div>
+        <div class="card" style="margin-top:16px"><h3>Traitements Batch PDF / ZIP</h3><p class="muted">Les lots de plusieurs PDF sont aussi conserves dans l'historique du compte avec le fichier ZIP final.</p><table><tr><th>Date</th><th>Projet</th><th>PDF</th><th>Statut</th><th>Fichier</th></tr>{batch_rows}</table></div>"""
         self.send_html("Tableau de bord", body)
 
     def workspace(self, message: str = ""):
@@ -2909,14 +2909,14 @@ class App(BaseHTTPRequestHandler):
         {cartouche_focus_panel()}
         <div class="card">
           <h2>Bibliotheque de modeles BTP Smart Tools</h2>
-          <p class="muted">Ces modeles servent uniquement aux cartouches. Le client choisit un modele pret a l'emploi ou importe une cartouche d'entreprise qui sera analysee une seule fois, puis reutilisee plusieurs fois.</p>
+          <p class="muted">Ces modeles servent uniquement aux cartouches. Le client choisit un modele pret a l'emploi ou importe une cartouche d'entreprise qui sera analysee une seule fois, stockee dans son compte, puis reutilisee plusieurs fois.</p>
           <div class="grid3">{platform_cards}</div>
         </div>
         <div class="grid">
           <form class="card" method="post" action="/templates" enctype="multipart/form-data">
             <h2>Modeles de cartouche personnalises</h2>
             {message}
-            <p class="muted">Importe une cartouche personnalisee : image, capture ou PDF. L'analyse coute {CREDIT_COST_TEMPLATE_ANALYSIS} credits une seule fois. Ensuite, le modele reste dans le compte et peut etre reutilise pour plusieurs PDF.</p>
+            <p class="muted">Importe une cartouche personnalisee : image, capture ou PDF. L'analyse coute {CREDIT_COST_TEMPLATE_ANALYSIS} credits une seule fois. Ensuite, le modele reste dans le compte et peut etre reutilise pour plusieurs PDF sans refaire l'analyse.</p>
             <label>Nom du modele</label>
             <input name="name" value="Modele entreprise">
             <label>Choisir une cartouche personnalisee</label>
@@ -2932,6 +2932,7 @@ class App(BaseHTTPRequestHandler):
             <p>3. Le modele est sauvegarde dans sa bibliotheque personnelle.</p>
             <p>4. Il le reutilise dans le generateur sans repayer l'analyse a chaque PDF.</p>
             <p>5. Chaque PDF final consomme seulement le credit de generation.</p>
+            <p>6. Les PDF finaux, lots ZIP et historiques restent rattaches au compte utilisateur.</p>
             <p class="alert">Important : l'objectif final n'est pas de coller l'image en fond, mais de reconstruire une cartouche dynamique propre, modifiable et reutilisable.</p>
             {cartouche_quality_html()}
           </div>
