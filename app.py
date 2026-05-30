@@ -75,6 +75,7 @@ PAYMENT_OFFERS = {
     "standard": {"label": "Pack standard", "amount": 10000, "display": "10 000 FCFA", "credits": 20, "subscription": "none", "days": 0, "description": "20 credits : 2 analyses de cartouches + 10 generations PDF."},
     "monthly": {"label": "Abonnement mensuel", "amount": 12000, "display": "12 000 FCFA", "credits": 30, "subscription": "monthly", "days": 31, "description": "30 credits/mois : cartouches, analyses IA et generations PDF."},
     "annual": {"label": "Abonnement annuel", "amount": 108000, "display": "108 000 FCFA", "credits": 450, "subscription": "annual", "days": 365, "description": "450 credits/an pour bureaux et entreprises BTP."},
+    "enterprise": {"label": "Pack entreprise", "amount": 250000, "display": "250 000 FCFA", "credits": 1500, "subscription": "enterprise", "days": 365, "description": "1500 credits/an pour entreprises, bureaux d'etudes et grands volumes de cartouches."},
 }
 
 CREDIT_COST_PDF = 1
@@ -2539,6 +2540,7 @@ class App(BaseHTTPRequestHandler):
           <div class="card"><span class="pill">Ponctuel</span><h2>1 200 FCFA</h2><p>1 credit = 1 PDF avec cartouche.</p></div>
           <div class="card"><span class="pill">Decouverte</span><h2>5 000 FCFA</h2><p>10 credits : analyse d'une cartouche + generations PDF.</p></div>
           <div class="card"><span class="pill">Mensuel</span><h2>12 000 FCFA</h2><p>30 credits inclus pour cartouches, analyses IA et PDF.</p></div>
+          <div class="card"><span class="pill">Entreprise</span><h2>250 000 FCFA</h2><p>1500 credits/an pour bureaux d'etudes, entreprises BTP et grands volumes.</p></div>
         </div>
         <div class="grid3" style="margin-top:20px">
           <div class="card roadmap-card"><span class="pill">Disponible</span><h3>Cartouches automatiques</h3><p>PDF, logo, formats, legendes et tableaux.</p></div>
@@ -4027,7 +4029,7 @@ def support_answer(question: str) -> str:
         answer = """
         <p><b>Paiement :</b> la plateforme fonctionne avec des credits pour couvrir les couts OpenAI, stockage, PVit, support et marge.</p>
         <p>1 PDF = 1 credit. 1 analyse de cartouche personnalisee = 5 credits. Une fois analysee, la cartouche peut etre reutilisee plusieurs fois.</p>
-        <p>Offres : 1 200 FCFA pour 1 credit, 5 000 FCFA pour 10 credits, 10 000 FCFA pour 20 credits, 12 000 FCFA/mois pour 30 credits, 108 000 FCFA/an pour 450 credits.</p>
+        <p>Offres : 1 200 FCFA pour 1 credit, 5 000 FCFA pour 10 credits, 10 000 FCFA pour 20 credits, 12 000 FCFA/mois pour 30 credits, 108 000 FCFA/an pour 450 credits, 250 000 FCFA/an pour 1500 credits entreprise.</p>
         """
     elif any(word in low for word in ["admin", "administrateur", "connexion", "mot de passe"]):
         answer = """
